@@ -1,6 +1,8 @@
 import { providerInfo } from "../lib/mail-client.js";
 import { extractLinks, messageBody, srcdoc } from "../lib/sanitize.js";
 
+const LOGO_URL = new URL("../../icons/eidon.png", import.meta.url).href;
+
 const LINK_ICON =
   '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07.07l1.77-1.77a5 5 0 0 0-7.07-7.07L10.5 5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M14 11a5 5 0 0 0-7.07-.07L5.16 12.7a5 5 0 0 0 7.07 7.07L13.5 18.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 
@@ -235,9 +237,10 @@ function renderAccount(data) {
   document.title = data.address ? `${data.address} · Posteingang` : "Posteingang";
   const identity = document.createElement("div");
   identity.className = "identity";
-  const mark = document.createElement("div");
+  const mark = document.createElement("img");
   mark.className = "mark";
-  mark.innerHTML = MAIL_ICON;
+  mark.src = LOGO_URL;
+  mark.alt = "";
   const text = document.createElement("div");
   text.className = "identity-text";
   const address = document.createElement("p");

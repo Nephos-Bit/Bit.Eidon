@@ -82,7 +82,9 @@ button {
 .mark {
   width: 36px;
   height: 36px;
-  background: var(--tm-blue);
+  border-radius: 0;
+  background: transparent;
+  object-fit: contain;
 }
 
 .identity-text {
