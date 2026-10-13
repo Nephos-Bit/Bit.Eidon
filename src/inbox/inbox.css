@@ -187,7 +187,7 @@ button {
 }
 
 .header-icon:focus-visible,
-.link-pop-item:focus-visible,
+.link-pop-item:focus-visible {
   outline: 2px solid var(--tm-blue);
   outline-offset: 2px;
 }
@@ -380,6 +380,8 @@ button {
   border: 1px solid var(--tm-separator);
   border-radius: 16px;
   background: var(--paper);
+  color: var(--tm-label);
+  color-scheme: light;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
 }
 
@@ -527,6 +529,12 @@ button {
     --row-selected: rgba(10, 132, 255, 0.24);
     --control: #3a3a3c;
     --control-hover: #48484a;
+  }
+
+  .link-pop {
+    background: var(--tm-grouped);
+    color-scheme: dark;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   }
 }
 
