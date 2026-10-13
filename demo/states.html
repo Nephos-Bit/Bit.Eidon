@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trashmail Karten</title>
+    <link rel="stylesheet" href="../src/styles/tokens.css" />
+    <link rel="stylesheet" href="../src/styles/cards.css" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #ececee;
+        font-family: var(--tm-font);
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 28px;
+        padding: 64px 16px;
+      }
+      .tm-anchor {
+        position: static;
+        transform: none;
+      }
+      figcaption {
+        margin: 0 0 8px 8px;
+        color: rgba(60, 60, 67, 0.72);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <figure>
+        <figcaption>Vorschlag</figcaption>
+        <div class="tm-anchor">
+          <section class="tm-card" role="status">
+            <button class="tm-close" type="button" aria-label="Schließen">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+            <div class="tm-head">
+              <div class="tm-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M4 7.5 12 13l8-5.5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              </div>
+              <div>
+                <h2 class="tm-title">Trashmail verwenden?</h2>
+                <p class="tm-subtitle">Wegwerfadresse für diese Registrierung.</p>
+              </div>
+            </div>
+            <div class="tm-actions">
+              <button class="tm-action" type="button">Später</button>
+              <button class="tm-action tm-primary" type="button">Erstellen</button>
+            </div>
+          </section>
+        </div>
+      </figure>
+
+      <figure>
+        <figcaption>Laufend</figcaption>
+        <div class="tm-anchor">
+          <section class="tm-card" role="status">
+            <button class="tm-close" type="button" aria-label="Schließen">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+            <div class="tm-head">
+              <div class="tm-icon">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+              </div>
+              <div>
+                <h2 class="tm-title">Adresse wird erstellt…</h2>
+                <p class="tm-subtitle">Bitte warten, die Trashmail wird angelegt.</p>
+              </div>
+            </div>
+            <div class="tm-track"><span class="tm-fill" style="width: 60%"></span></div>
+            <div class="tm-percent">60%</div>
+            <div class="tm-actions">
+              <button class="tm-action" type="button">Abbrechen</button>
+            </div>
+          </section>
+        </div>
+      </figure>
+
+      <figure>
+        <figcaption>Fertig</figcaption>
+        <div class="tm-anchor">
+          <section class="tm-card" role="status">
+            <button class="tm-close" type="button" aria-label="Schließen">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+            <div class="tm-head">
+              <div class="tm-icon tm-success">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>
+              </div>
+              <div>
+                <h2 class="tm-title">Fertig</h2>
+                <p class="tm-subtitle">k7mq2p9a1cde@example.com</p>
+              </div>
+            </div>
+            <button class="tm-pill" type="button">Posteingang</button>
+          </section>
+        </div>
+      </figure>
+    </main>
+  </body>
+</html>

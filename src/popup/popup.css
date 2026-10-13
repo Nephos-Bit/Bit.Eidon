@@ -1,0 +1,79 @@
+html,
+body {
+  margin: 0;
+  width: 360px;
+  background: var(--tm-canvas);
+  color: var(--tm-label);
+  font-family: var(--tm-font);
+}
+
+body {
+  box-sizing: border-box;
+  padding: 16px;
+}
+
+.tm-anchor {
+  position: static;
+  width: auto;
+  transform: none;
+}
+
+.tm-head {
+  padding-right: 0;
+}
+
+.tm-card {
+  animation: none;
+}
+
+.history {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--tm-grouped);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history .addr {
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.history .meta,
+.empty {
+  color: var(--tm-muted, rgba(60, 60, 67, 0.72));
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.empty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.credit {
+  margin: 14px 0 0;
+  color: var(--tm-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.credit a {
+  color: var(--tm-blue);
+}

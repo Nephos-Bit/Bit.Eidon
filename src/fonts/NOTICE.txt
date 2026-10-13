@@ -1,0 +1,13 @@
+Material Symbols Rounded
+Copyright Google LLC
+
+This file set contains an unmodified subset of the Material Symbols Rounded
+icon font, as served by Google Fonts (https://fonts.google.com/icons).
+The subset includes the icons check, content_copy, and refresh.
+
+The icons are licensed under the Apache License, Version 2.0.
+The full license text is in LICENSE.txt.
+
+Google's Material Symbols guide asks that use of the icons be attributed.
+This extension shows that notice in the inbox, next to the other credits:
+"Symbole: Material Symbols von Google, Apache-Lizenz 2.0".
