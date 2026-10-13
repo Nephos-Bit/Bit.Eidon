@@ -144,6 +144,10 @@ export async function fetchMessage(base, token, id, signal) {
   return api(base, `/messages/${id}`, { token, signal });
 }
 
+export async function deleteAccount(base, token, id, signal) {
+  await api(base, `/accounts/${encodeURIComponent(id)}`, { method: "DELETE", token, signal });
+}
+
 async function createOnProvider(base, signal, onProgress) {
   onProgress?.(15, "Domain wird geladen…");
   const domain = await activeDomain(base, signal);

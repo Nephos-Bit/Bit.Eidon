@@ -33,13 +33,74 @@ body {
   animation: none;
 }
 
+.lock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lock h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.lock p,
+.lock-error {
+  margin: 0;
+  color: var(--tm-muted, rgba(60, 60, 67, 0.72));
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.lock input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--tm-grouped);
+  color: inherit;
+  font: inherit;
+}
+
+.lock .tm-action {
+  align-self: flex-start;
+  margin: 0;
+  color: var(--tm-blue);
+}
+
+.lock .tm-primary {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--tm-blue);
+  color: #fff;
+}
+
 .history {
   margin: 14px 0 0;
   padding: 0;
   list-style: none;
 }
 
-.history button {
+.history li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.history .danger {
+  flex: none;
+  padding: 8px;
+  border: 0;
+  background: none;
+  color: var(--tm-muted, rgba(60, 60, 67, 0.72));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.history button:not(.danger) {
   display: flex;
   flex-direction: column;
   gap: 2px;

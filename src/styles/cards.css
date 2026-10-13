@@ -107,6 +107,7 @@
 
 .tm-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 22px;
   align-items: center;
   margin: 10px 0 2px 48px;

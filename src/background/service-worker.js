@@ -1,16 +1,49 @@
-import { createMailbox, fetchMessage, fetchMessages, isMailboxExpired, login, mailboxExpiresAt } from "../lib/mail-client.js";
+import { createMailbox, deleteAccount, fetchMessage, fetchMessages, isMailboxExpired, login, mailboxExpiresAt } from "../lib/mail-client.js";
+import { extractMailCode } from "../lib/mail-code.js";
+import { sameHost } from "../lib/host.js";
 import { generatePassword, generatePerson } from "../lib/password.js";
-import { getMailbox, listMailboxes, saveMailbox, updateMailbox } from "../lib/storage.js";
+import { hasLock, isUnlocked, openRecord, resetLock, sealRecord, setPassphrase, unlock } from "../lib/secrets.js";
+import { getMailbox, listMailboxes, removeMailbox, saveMailbox } from "../lib/storage.js";
 
 const jobs = new Map();
+const inboxTabs = new Map();
 const SESSION_MAILBOX = "sessionMailboxId";
+const TOKEN_KEY = "mailboxTokens";
+const CONTENT_TYPES = new Set([
+  "preview-profile",
+  "create-mailbox",
+  "abort-create",
+  "continuation-profile",
+  "session-profile",
+  "peek-code",
+  "open-inbox",
+  "open-lock",
+]);
+const PAGE_TYPES = new Set([
+  "list-messages",
+  "get-message",
+  "list-mailboxes",
+  "delete-mailbox",
+  "set-lock",
+  "unlock",
+  "reset-lock",
+  "lock-status",
+  "open-inbox",
+]);
+
+let lockTabId = null;
+
+function isExtensionPage(sender) {
+  const url = sender?.url || "";
+  return Boolean(url) && url.startsWith(chrome.runtime.getURL(""));
+}
 
 async function loadSessionMailbox() {
   try {
     const stored = await chrome.storage.session.get(SESSION_MAILBOX);
     const id = stored[SESSION_MAILBOX];
     if (!id) return null;
-    const mailbox = await getMailbox(id);
+    const mailbox = await openRecord(await getMailbox(id));
     if (!mailbox || isMailboxExpired(mailbox)) return null;
     return mailbox;
   } catch {
@@ -24,6 +57,11 @@ async function rememberSessionMailbox(id) {
   } catch {
     // Ohne Session-Speicher bleibt jede Seite bei einer eigenen Adresse.
   }
+}
+
+async function clearSessionMailbox(id) {
+  const stored = await chrome.storage.session.get(SESSION_MAILBOX);
+  if (stored[SESSION_MAILBOX] === id) await chrome.storage.session.remove(SESSION_MAILBOX);
 }
 
 function jobKey(sender) {
@@ -41,14 +79,53 @@ async function setBadge(count) {
   await chrome.action.setBadgeBackgroundColor({ color: "#0A84FF" });
 }
 
+async function readTokens() {
+  const stored = await chrome.storage.session.get(TOKEN_KEY);
+  return stored[TOKEN_KEY] || {};
+}
+
+async function readToken(id) {
+  const tokens = await readTokens();
+  return tokens[id] || "";
+}
+
+async function writeToken(id, token) {
+  const tokens = await readTokens();
+  tokens[id] = token;
+  await chrome.storage.session.set({ [TOKEN_KEY]: tokens });
+}
+
+async function forgetToken(id) {
+  const tokens = await readTokens();
+  delete tokens[id];
+  await chrome.storage.session.set({ [TOKEN_KEY]: tokens });
+}
+
 async function withToken(mailbox, run) {
+  let token = await readToken(mailbox.id);
+  if (!token) {
+    token = await login(mailbox.provider, mailbox.address, mailbox.mailboxPassword);
+    await writeToken(mailbox.id, token);
+  }
   try {
-    return await run(mailbox.token);
+    return await run(token);
   } catch (error) {
     if (error.status !== 401) throw error;
-    const token = await login(mailbox.provider, mailbox.address, mailbox.mailboxPassword);
-    const updated = await updateMailbox(mailbox.id, { token });
-    return run(updated.token);
+    token = await login(mailbox.provider, mailbox.address, mailbox.mailboxPassword);
+    await writeToken(mailbox.id, token);
+    return run(token);
+  }
+}
+
+async function forgetRemote(records) {
+  for (const sealed of records) {
+    try {
+      const mailbox = await openRecord(sealed);
+      if (!mailbox?.mailboxPassword || !mailbox.provider) continue;
+      await withToken(mailbox, (token) => deleteAccount(mailbox.provider, token, mailbox.id));
+    } catch {
+      // Der lokale Eintrag ist bereits entfernt.
+    }
   }
 }
 
@@ -91,7 +168,73 @@ function mailboxView(mailbox) {
   };
 }
 
+function profileFrom(item) {
+  const givenName = item.givenName || "";
+  const familyName = item.familyName || "";
+  return {
+    id: item.id,
+    address: item.address,
+    sitePassword: item.sitePassword,
+    givenName,
+    familyName,
+    fullName: [givenName, familyName].filter(Boolean).join(" "),
+    honorific: item.honorific || "Frau",
+    birthDay: item.birthDay || "15",
+    birthMonth: item.birthMonth || "03",
+    birthYear: item.birthYear || "1994",
+  };
+}
+
+function personFrom(preview) {
+  if (preview?.givenName && preview?.familyName && preview?.birthYear) {
+    return {
+      givenName: preview.givenName,
+      familyName: preview.familyName,
+      fullName: preview.fullName || `${preview.givenName} ${preview.familyName}`,
+      honorific: preview.honorific || "Frau",
+      birthDay: preview.birthDay,
+      birthMonth: preview.birthMonth,
+      birthYear: preview.birthYear,
+    };
+  }
+  return generatePerson();
+}
+
+async function openLockTab() {
+  if (lockTabId != null) {
+    try {
+      await chrome.tabs.update(lockTabId, { active: true });
+      return;
+    } catch {
+      lockTabId = null;
+    }
+  }
+  const tab = await chrome.tabs.create({ url: chrome.runtime.getURL("src/lock/lock.html"), active: true });
+  lockTabId = tab?.id ?? null;
+}
+
+async function requireUnlock({ open = true } = {}) {
+  if (await isUnlocked()) return true;
+  if (open) await openLockTab();
+  return false;
+}
+
+async function handlePreview() {
+  if (!(await requireUnlock())) return { ok: false, locked: true };
+  const existing = await loadSessionMailbox();
+  if (existing) return { ok: true, reused: true, ...profileFrom(existing) };
+  const person = generatePerson();
+  return {
+    ok: true,
+    reused: false,
+    address: "",
+    sitePassword: generatePassword(16),
+    ...person,
+  };
+}
+
 async function handleCreate(message, sender) {
+  if (!(await requireUnlock())) return { ok: false, locked: true };
   const key = jobKey(sender);
   jobs.get(key)?.abort();
   const existing = await loadSessionMailbox();
@@ -102,10 +245,14 @@ async function handleCreate(message, sender) {
     const created = await createMailbox(controller.signal, (percent, label) => {
       notify(sender, { type: "mailbox-progress", percent, label });
     });
-    const person = generatePerson();
+    if (created.token) await writeToken(created.id, created.token);
+    const person = personFrom(message.preview);
     const record = {
-      ...created,
-      sitePassword: generatePassword(16),
+      id: created.id,
+      address: created.address,
+      mailboxPassword: created.mailboxPassword,
+      provider: created.provider,
+      sitePassword: message.preview?.sitePassword || generatePassword(16),
       givenName: person.givenName,
       familyName: person.familyName,
       honorific: person.honorific,
@@ -113,27 +260,15 @@ async function handleCreate(message, sender) {
       birthMonth: person.birthMonth,
       birthYear: person.birthYear,
       origin: message.origin || "",
-      pageUrl: message.pageUrl || "",
       createdAt: Date.now(),
     };
-    await saveMailbox(record);
+    const evicted = await saveMailbox(await sealRecord(record));
     await rememberSessionMailbox(record.id);
-    return {
-      ok: true,
-      id: record.id,
-      address: record.address,
-      sitePassword: record.sitePassword,
-      givenName: person.givenName,
-      familyName: person.familyName,
-      fullName: person.fullName,
-      honorific: person.honorific,
-      birthDay: person.birthDay,
-      birthMonth: person.birthMonth,
-      birthYear: person.birthYear,
-    };
+    await forgetRemote(evicted);
+    return { ok: true, ...profileFrom(record) };
   } catch (error) {
     if (controller.signal.aborted || error.name === "AbortError") return { ok: false, aborted: true };
-    return { ok: false, error: error.message || "Die Trashmail konnte nicht angelegt werden." };
+    return { ok: false, error: error.message || "Die Adresse konnte nicht angelegt werden." };
   } finally {
     if (jobs.get(key) === controller) jobs.delete(key);
   }
@@ -144,47 +279,32 @@ async function handleAbort(_message, sender) {
   return { ok: true };
 }
 
-async function existingInboxTab(id) {
-  const base = chrome.runtime.getURL("src/inbox/inbox.html");
-  try {
-    const tabs = await chrome.tabs.query({ url: `${base}*` });
-    return (
-      tabs.find((tab) => {
-        try {
-          return new URL(tab.url || "").searchParams.get("id") === String(id || "");
-        } catch {
-          return false;
-        }
-      }) || null
-    );
-  } catch {
-    return null;
-  }
-}
-
 async function handleOpenInbox(message) {
-  const url = chrome.runtime.getURL(`src/inbox/inbox.html?id=${encodeURIComponent(message.id || "")}`);
-  const existing = await existingInboxTab(message.id);
-  if (existing?.id != null) {
-    if (message.active) await chrome.tabs.update(existing.id, { active: true });
-    return { ok: true, tabId: existing.id };
+  if (!(await requireUnlock())) return { ok: false, locked: true };
+  const id = String(message.id || "");
+  const known = id ? inboxTabs.get(id) : null;
+  if (known != null) {
+    try {
+      if (message.active) await chrome.tabs.update(known, { active: true });
+      return { ok: true, tabId: known };
+    } catch {
+      inboxTabs.delete(id);
+    }
   }
+  const url = chrome.runtime.getURL(`src/inbox/inbox.html?id=${encodeURIComponent(message.id || "")}`);
   const tab = await chrome.tabs.create({ url, active: !!message.active });
+  if (id && tab?.id != null) inboxTabs.set(id, tab.id);
   return { ok: true, tabId: tab.id };
 }
 
-async function handleFocusTab(message) {
-  if (!message.tabId) return { ok: false };
-  try {
-    await chrome.tabs.update(message.tabId, { active: true });
-    return { ok: true };
-  } catch {
-    return { ok: false };
-  }
+async function handleOpenLock() {
+  await openLockTab();
+  return { ok: true };
 }
 
 async function handleListMessages(message) {
-  const mailbox = await getMailbox(message.id);
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  const mailbox = await openRecord(await getMailbox(message.id));
   if (!mailbox) return { ok: false, error: "Keine Mailbox" };
   const view = mailboxView(mailbox);
   if (isMailboxExpired(mailbox)) return { ok: true, ...view, expired: true, messages: [] };
@@ -195,7 +315,8 @@ async function handleListMessages(message) {
 }
 
 async function handleGetMessage(message) {
-  const mailbox = await getMailbox(message.id);
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  const mailbox = await openRecord(await getMailbox(message.id));
   if (!mailbox) return { ok: false, error: "Keine Mailbox" };
   const full = await withToken(mailbox, (token) => fetchMessage(mailbox.provider, token, message.messageId));
   return {
@@ -214,42 +335,40 @@ async function handleGetMessage(message) {
   };
 }
 
-function profileFrom(item) {
-  const givenName = item.givenName || "";
-  const familyName = item.familyName || "";
-  return {
-    id: item.id,
-    address: item.address,
-    sitePassword: item.sitePassword,
-    givenName,
-    familyName,
-    fullName: [givenName, familyName].filter(Boolean).join(" "),
-    honorific: item.honorific || "Frau",
-    birthDay: item.birthDay || "15",
-    birthMonth: item.birthMonth || "03",
-    birthYear: item.birthYear || "1994",
-  };
-}
-
-function sameSite(left, right) {
-  try {
-    const host = (value) => new URL(value).hostname.replace(/^www\./, "");
-    const a = host(left);
-    const b = host(right);
-    return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
-  } catch {
-    return false;
-  }
+async function handlePeekCode(message) {
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  const mailbox = await openRecord(await getMailbox(message.id));
+  if (!mailbox) return { ok: false, error: "Keine Mailbox" };
+  if (isMailboxExpired(mailbox)) return { ok: true, code: "" };
+  const data = await withToken(mailbox, (token) => fetchMessages(mailbox.provider, token));
+  const newest = data[0];
+  if (!newest) return { ok: true, code: "" };
+  const introCode = extractMailCode(`${newest.subject || ""} ${newest.intro || ""}`);
+  if (introCode) return { ok: true, code: introCode.replace(/\D/g, "") };
+  const full = await withToken(mailbox, (token) => fetchMessage(mailbox.provider, token, newest.id));
+  const code = extractMailCode(`${full?.subject || ""} ${full?.text || ""}`);
+  return { ok: true, code: String(code || "").replace(/\D/g, "") };
 }
 
 async function handleSessionProfile() {
+  if (!(await requireUnlock())) return { ok: false, locked: true };
   const mailbox = await loadSessionMailbox();
   if (!mailbox) return { ok: false };
   return { ok: true, profile: profileFrom(mailbox) };
 }
 
+async function openedMailboxes() {
+  const open = [];
+  for (const item of await listMailboxes()) {
+    const mailbox = await openRecord(item);
+    if (mailbox) open.push(mailbox);
+  }
+  return open;
+}
+
 async function handleContinuation(message) {
-  const mailboxes = await listMailboxes();
+  if (!(await requireUnlock())) return { ok: false, locked: true };
+  const mailboxes = await openedMailboxes();
   const address = String(message.address || "").trim().toLowerCase();
   const byAddress = address ? mailboxes.find((item) => item.address.toLowerCase() === address) : null;
   if (byAddress) {
@@ -258,19 +377,70 @@ async function handleContinuation(message) {
   }
   const recent = Date.now() - 6 * 60 * 60 * 1000;
   const bySite = mailboxes.find(
-    (item) => item.createdAt > recent && !isMailboxExpired(item) && sameSite(item.origin, message.origin),
+    (item) => item.createdAt > recent && !isMailboxExpired(item) && sameHost(item.origin, message.origin),
   );
   if (!bySite) return { ok: false };
   return { ok: true, profile: profileFrom(bySite) };
 }
 
 async function handleListMailboxes() {
-  const mailboxes = await listMailboxes();
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  const mailboxes = await openedMailboxes();
+  await refreshBadge();
   return { ok: true, mailboxes: mailboxes.map(publicMailbox) };
 }
 
+async function handleDelete(message) {
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  const mailbox = await openRecord(await getMailbox(message.id));
+  if (mailbox?.mailboxPassword && mailbox.provider) {
+    try {
+      await withToken(mailbox, (token) => deleteAccount(mailbox.provider, token, mailbox.id));
+    } catch {
+      // Der lokale Eintrag wird trotzdem entfernt.
+    }
+  }
+  await removeMailbox(message.id);
+  await forgetToken(message.id);
+  await clearSessionMailbox(message.id);
+  inboxTabs.delete(String(message.id || ""));
+  return { ok: true };
+}
+
+function passphraseError(passphrase) {
+  if (typeof passphrase !== "string" || passphrase.length < 8) return "Mindestens 8 Zeichen.";
+  return "";
+}
+
+async function handleSetLock(message) {
+  const error = passphraseError(message.passphrase);
+  if (error) return { ok: false, error };
+  const created = await setPassphrase(message.passphrase);
+  if (!created) return { ok: false, error: "Eine Sperre ist bereits gesetzt." };
+  return { ok: true };
+}
+
+async function handleUnlock(message) {
+  const error = passphraseError(message.passphrase);
+  if (error) return { ok: false, error };
+  const opened = await unlock(message.passphrase);
+  if (!opened) return { ok: false, error: "Die Sperre stimmt nicht." };
+  return { ok: true };
+}
+
+async function handleResetLock() {
+  await resetLock();
+  inboxTabs.clear();
+  lockTabId = null;
+  return { ok: true };
+}
+
+async function handleLockStatus() {
+  return { ok: true, unlocked: await isUnlocked(), hasPassphrase: await hasLock() };
+}
+
 async function refreshBadge() {
-  const mailbox = await getMailbox();
+  const mailbox = await openRecord(await getMailbox());
   if (!mailbox || isMailboxExpired(mailbox)) {
     await setBadge(0);
     return;
@@ -284,30 +454,40 @@ async function refreshBadge() {
   }
 }
 
-function ensureAlarm() {
-  chrome.alarms.create("refresh-badge", { periodInMinutes: 1 });
-}
-
-chrome.runtime.onInstalled.addListener(ensureAlarm);
-chrome.runtime.onStartup.addListener(ensureAlarm);
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "refresh-badge") refreshBadge();
-});
-
 const handlers = {
+  "preview-profile": handlePreview,
   "create-mailbox": handleCreate,
   "abort-create": handleAbort,
   "open-inbox": handleOpenInbox,
-  "focus-tab": handleFocusTab,
+  "open-lock": handleOpenLock,
   "list-messages": handleListMessages,
   "get-message": handleGetMessage,
+  "peek-code": handlePeekCode,
   "list-mailboxes": handleListMailboxes,
+  "delete-mailbox": handleDelete,
   "continuation-profile": handleContinuation,
   "session-profile": handleSessionProfile,
+  "set-lock": handleSetLock,
+  unlock: handleUnlock,
+  "reset-lock": handleResetLock,
+  "lock-status": handleLockStatus,
 };
 
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "inbox" || !isExtensionPage(port.sender || {})) return;
+  const tabId = port.sender?.tab?.id;
+  port.onMessage.addListener((message) => {
+    if (!message?.id || tabId == null) return;
+    inboxTabs.set(String(message.id), tabId);
+  });
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const handler = handlers[message?.type];
+  const type = message?.type;
+  if (!sender?.url || !type) return false;
+  const allowed = isExtensionPage(sender) ? PAGE_TYPES.has(type) : Boolean(sender.tab) && CONTENT_TYPES.has(type);
+  if (!allowed) return false;
+  const handler = handlers[type];
   if (!handler) return false;
   handler(message, sender)
     .then(sendResponse)

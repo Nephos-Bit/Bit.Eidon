@@ -19,12 +19,19 @@ export function messageBody(message) {
 export function sanitizeEmailHtml(html) {
   const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
   doc.querySelectorAll([...DROP].join(",")).forEach((node) => node.remove());
+  doc.querySelectorAll("style").forEach((node) => {
+    node.textContent = node.textContent.replace(/url\s*\([^)]*\)/gi, "none");
+  });
   doc.querySelectorAll("*").forEach((node) => {
     for (const attr of [...node.attributes]) {
       const name = attr.name.toLowerCase();
       const value = attr.value.trim();
-      if (name.startsWith("on") || name === "srcdoc") {
+      if (name.startsWith("on") || name === "srcdoc" || name === "srcset" || name === "formaction") {
         node.removeAttribute(attr.name);
+        continue;
+      }
+      if (name === "style" && /url\s*\(/i.test(value)) {
+        node.setAttribute(attr.name, value.replace(/url\s*\([^)]*\)/gi, "none"));
         continue;
       }
       if ((name === "href" || name === "src") && /^javascript:/i.test(value)) {
@@ -51,5 +58,5 @@ export function extractLinks(html) {
 
 export function srcdoc(html) {
   const safe = sanitizeEmailHtml(html);
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; font-src https: data:;"><base target="_blank"></head><body style="margin:0;font:15px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#1c1c1e;">${safe}</body></html>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:;"><base target="_blank"></head><body style="margin:0;font:15px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#1c1c1e;">${safe}</body></html>`;
 }

@@ -2,18 +2,21 @@ const CAPTCHA =
   'iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"], .g-recaptcha, .h-captcha, .cf-turnstile, [data-sitekey]';
 
 const copy = {
-  suggestTitle: "Trashmail verwenden?",
+  suggestTitle: "Eidon verwenden?",
   suggestSignup: "Wegwerfadresse für diese Registrierung.",
   suggestLogin: "Wegwerfadresse erzeugen. Ein Login wird nicht abgesendet.",
-  suggestSession: "Dieselbe Adresse aus dieser Sitzung:",
+  providerNote:
+    "mail.tm behält Nachrichten etwa 7 Tage, das Konto läuft hier nicht ab. Fallback mail.gw: Konto und Nachrichten 10 Minuten. Die Adresse nur verwenden, wo die Seite das erlaubt.",
   later: "Später",
-  create: "Erstellen",
-  use: "Verwenden",
+  fillOnly: "Nur ausfüllen",
+  fillSend: "Ausfüllen und senden",
   runningTitle: "Adresse wird erstellt…",
-  runningSubtitle: "Bitte warten, die Trashmail wird angelegt.",
+  runningSubtitle: "Bitte warten, die Adresse wird angelegt.",
   cancel: "Abbrechen",
   filling: "Felder werden ausgefüllt…",
   doneTitle: "Fertig",
+  filledTitle: "Felder ausgefüllt",
+  filledSubtitle: "Das Formular wurde nicht abgesendet.",
   inbox: "Posteingang",
   captchaTitle: "Captcha ausstehend",
   captchaSubtitle: "Felder sind ausgefüllt. Captcha lösen, dann senden.",
@@ -28,6 +31,8 @@ const copy = {
   failedTitle: "Nicht erstellt",
   retry: "Erneut",
   fillFailed: "Felder konnten nicht gefüllt werden.",
+  lockedTitle: "Eidon ist gesperrt",
+  lockedSubtitle: "Entsperre Eidon im geöffneten Tab und versuche es erneut.",
 };
 
 const ICONS = {
@@ -48,6 +53,8 @@ let scanTimer = 0;
 let passwordWatch = 0;
 let followWatch = 0;
 let activeProfile = null;
+let confirmedRoot = null;
+let draft = null;
 let followStartedAt = 0;
 let followPasswordTries = 0;
 let lastCodePoll = 0;
@@ -313,20 +320,6 @@ function fillGender(scope) {
   }
 }
 
-function fillTerms(scope) {
-  for (const box of scope.querySelectorAll('input[type="checkbox"]')) {
-    if (!isVisible(box) || box.checked) continue;
-    const text = controlText(box);
-    if (TrashmailForm.isMarketingLabel(text) || !TrashmailForm.isTermsLabel(text)) continue;
-    box.click();
-    if (!box.checked) {
-      box.checked = true;
-      box.dispatchEvent(new Event("input", { bubbles: true }));
-      box.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-  }
-}
-
 function fillPasswords(passwords, sitePassword, { signup = false } = {}) {
   if (!sitePassword) return;
   for (const input of passwords) {
@@ -349,7 +342,6 @@ function fillRegistration(found, profile) {
   fillNames(found.scope, profile);
   fillBirth(found.scope, profile);
   fillGender(found.scope);
-  fillTerms(found.scope);
 }
 
 function fillNames(scope, person) {
@@ -428,16 +420,12 @@ function submitForm(found, { force = false } = {}) {
   return { status: "submitted" };
 }
 
-async function ensureToast() {
+function ensureToast() {
   if (toast) return toast;
   const host = document.createElement("div");
   const shadow = host.attachShadow({ mode: "closed" });
-  const [tokens, cards] = await Promise.all([
-    fetch(chrome.runtime.getURL("src/styles/tokens.css")).then((response) => response.text()),
-    fetch(chrome.runtime.getURL("src/styles/cards.css")).then((response) => response.text()),
-  ]);
   const style = document.createElement("style");
-  style.textContent = `${tokens}\n${cards}`;
+  style.textContent = globalThis.EidonToastStyle || "";
   const anchor = document.createElement("div");
   anchor.className = "tm-anchor";
   shadow.append(style, anchor);
@@ -549,7 +537,9 @@ function hideToast({ block = false } = {}) {
     clearInterval(followWatch);
     followWatch = 0;
     activeProfile = null;
+    confirmedRoot = null;
   }
+  draft = null;
   clearInterval(passwordWatch);
   passwordWatch = 0;
   toast?.host.remove();
@@ -587,12 +577,12 @@ async function abortCreate() {
 
 async function focusInbox() {
   if (!mailboxId) return;
-  if (inboxTabId) {
-    const focused = await chrome.runtime.sendMessage({ type: "focus-tab", tabId: inboxTabId });
-    if (focused?.ok) return;
-  }
   const opened = await chrome.runtime.sendMessage({ type: "open-inbox", id: mailboxId, active: true });
-  inboxTabId = opened?.tabId ?? null;
+  if (opened?.locked) {
+    showLocked();
+    return;
+  }
+  inboxTabId = opened?.tabId ?? inboxTabId;
 }
 
 function showFinished({ title, subtitle, pillLabel = copy.inbox, onPill = null }) {
@@ -667,14 +657,9 @@ function codeFields(root) {
 }
 
 async function readMailCode(id) {
-  const list = await chrome.runtime.sendMessage({ type: "list-messages", id });
-  const newest = list?.messages?.[0];
-  if (!list?.ok || !newest) return "";
-  const introCode = TrashmailForm.extractMailCode(`${newest.subject || ""} ${newest.intro || ""}`);
-  if (introCode) return introCode;
-  const full = await chrome.runtime.sendMessage({ type: "get-message", id, messageId: newest.id });
-  if (!full?.ok) return "";
-  return TrashmailForm.extractMailCode(`${full.message?.subject || ""} ${full.message?.text || ""}`);
+  const response = await chrome.runtime.sendMessage({ type: "peek-code", id });
+  if (!response?.ok) return "";
+  return String(response.code || "").replace(/\D/g, "");
 }
 
 async function fillCodeFields(fields, id) {
@@ -704,7 +689,8 @@ function startFollow(profile) {
 }
 
 async function followStep() {
-  if (!activeProfile || !current) {
+  const root = confirmedRoot?.isConnected ? confirmedRoot : null;
+  if (!activeProfile || !root) {
     stopFollow();
     return;
   }
@@ -713,35 +699,25 @@ async function followStep() {
     return;
   }
   const passwords = [
-    ...setupPasswords(document),
-    ...[...document.querySelectorAll('input[type="password"]')].filter(
+    ...setupPasswords(root),
+    ...[...root.querySelectorAll('input[type="password"]')].filter(
       (input) =>
         isVisible(input) && !input.value.trim() && (input.autocomplete || "").includes("current-password"),
     ),
   ];
-  const codes = codeFields(document);
-  const scope = passwords[0]?.form || codes[0]?.form || current.scope || document.body;
-  const emails = registrationEmails(scope).filter((input) => !input.value.trim());
+  const codes = codeFields(root);
+  const emails = registrationEmails(root).filter((input) => !input.value.trim());
   if (!passwords.length && !codes.length && !emails.length) return;
-  current.scope = scope;
-  current.kind = "signup";
-  let acted = false;
-  if (emails.length) {
+  if (emails.length && activeProfile.address) {
     emails.forEach((input) => setValue(input, activeProfile.address));
-    acted = true;
   }
   if (passwords.length && followPasswordTries < 4) {
     followPasswordTries += 1;
-    current.passwords = passwords;
     fillPasswords(passwords, activeProfile.sitePassword, { signup: true });
-    fillNames(scope, activeProfile);
-    fillBirth(scope, activeProfile);
-    acted = true;
+    fillNames(root, activeProfile);
+    fillBirth(root, activeProfile);
   }
-  if (codes.length && (await fillCodeFields(codes, activeProfile.id))) acted = true;
-  if (!acted) return;
-  mode = "running";
-  setTimeout(() => reportSubmit(activeProfile.address), 200);
+  if (codes.length) await fillCodeFields(codes, activeProfile.id);
 }
 
 function hasNewRegistrationFields(controls) {
@@ -768,16 +744,8 @@ function hasNewRegistrationFields(controls) {
   });
 }
 
-function adaptToForm(profile, hadPasswordAtStart) {
+function adaptToForm(profile) {
   activeProfile = profile;
-  if (current.kind === "login" && hadPasswordAtStart) {
-    activeProfile = null;
-    showFinished({
-      title: copy.loginDoneTitle,
-      subtitle: `${profile.address} — ${copy.loginDoneSubtitle}`,
-    });
-    return;
-  }
   if ((current.passwords || []).some((input) => input.value.trim())) {
     setTimeout(() => reportSubmit(profile.address), 150);
     return;
@@ -786,11 +754,9 @@ function adaptToForm(profile, hadPasswordAtStart) {
   const known = new Set(visibleControls());
   mode = "adapt";
   setProgress(80, copy.adapting);
-  let advanced = false;
   const started = Date.now();
   const button = findSubmit(current.email);
   if (button && !button.disabled && TrashmailForm.isContinueLabel(buttonText(button))) {
-    advanced = true;
     button.click();
   }
   stopAdapt();
@@ -832,25 +798,75 @@ function adaptToForm(profile, hadPasswordAtStart) {
   }, 300);
 }
 
-async function finishCreate(response, { filling = false } = {}) {
+function showQuiet({ title, subtitle }) {
+  if (!toast) return;
+  renderCard({
+    icon: ICONS.check,
+    success: true,
+    title,
+    subtitle,
+    pill: { label: copy.inbox, onClick: focusInbox },
+  });
+  mode = "idle";
+}
+
+function showLocked() {
+  ensureToast();
+  mode = "suggest";
+  renderCard({
+    icon: ICONS.mail,
+    title: copy.lockedTitle,
+    subtitle: copy.lockedSubtitle,
+    actions: [{ label: copy.retry, primary: true, onClick: () => retryAfterLock() }],
+  });
+}
+
+async function retryAfterLock() {
+  const found = current;
+  hideToast();
+  blocked = false;
+  if (found) await showSuggest(found);
+  else await scan();
+}
+
+async function finishFill(profile, { send }) {
+  mailboxId = profile.id;
+  confirmedRoot = current?.email?.form || current?.scope || null;
+  activeProfile = profile;
   const opened = await chrome.runtime.sendMessage({ type: "open-inbox", id: mailboxId, active: false });
+  if (opened?.locked) {
+    showLocked();
+    return;
+  }
   inboxTabId = opened?.tabId ?? null;
   if (mode !== "running" || !current) return;
 
-  const hadPasswordAtStart = (current.passwords || []).length > 0;
   try {
-    if (!filling) setProgress(80, copy.filling);
     const scope = current.email?.form || current.scope || document.body;
     current.scope = scope;
     current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter((input) => isVisible(input));
-    if (current.kind === "login" && hadPasswordAtStart) setValue(current.email, response.address);
-    else fillRegistration(current, response);
+    if (current.kind === "login") {
+      stopFollow();
+      if (isEmailInput(current.email) && profile.address && !current.email.value.trim()) setValue(current.email, profile.address);
+      activeProfile = null;
+      showQuiet({
+        title: copy.loginDoneTitle,
+        subtitle: `${profile.address} — ${copy.loginDoneSubtitle}`,
+      });
+      return;
+    }
+    fillRegistration(current, profile);
   } catch {
     showFinished({ title: copy.failedTitle, subtitle: copy.fillFailed });
     return;
   }
 
-  adaptToForm(response, hadPasswordAtStart);
+  if (!send) {
+    showQuiet({ title: copy.filledTitle, subtitle: copy.filledSubtitle });
+    startFollow(profile);
+    return;
+  }
+  adaptToForm(profile);
 }
 
 function reportSubmit(address) {
@@ -884,37 +900,42 @@ function reportSubmit(address) {
   showFinished({ title: copy.doneTitle, subtitle: address });
 }
 
-async function sessionProfile() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "session-profile" });
-    return response?.ok ? response.profile : null;
-  } catch {
-    return null;
-  }
+function taken(response) {
+  if (!response || response.locked || response.ok === false) return null;
+  return response.profile || response;
 }
 
-async function startCreate() {
-  if (!current || mode === "running") return;
+function previewSubtitle(profile, found) {
+  const person = profile.fullName || [profile.givenName, profile.familyName].filter(Boolean).join(" ");
+  const bits = [];
+  if (!profile.address) bits.push(found?.kind === "login" ? copy.suggestLogin : copy.suggestSignup);
+  if (profile.address) bits.push(profile.address);
+  if (person) bits.push(person);
+  if (profile.sitePassword) bits.push(`Passwort ${profile.sitePassword}`);
+  bits.push(copy.providerNote);
+  return bits.join(" ");
+}
+
+function revealIdentity(profile) {
+  if (!current || !profile) return;
+  if (profile.address && isEmailInput(current.email) && !current.email.value.trim() && !isNewsletterEmail(current.email)) {
+    setValue(current.email, profile.address);
+  }
+  fillNames(current.scope, profile);
+}
+
+async function confirmChoice(send) {
+  if (!current || !draft || mode === "running") return;
   mode = "running";
   inboxTabId = null;
   try {
-    await ensureToast();
+    ensureToast();
   } catch {
     mode = "idle";
     return;
   }
-  const profile = await sessionProfile();
-  if (mode !== "running" || !current) return;
-  if (profile?.address) {
-    mailboxId = profile.id;
-    renderCard({
-      icon: ICONS.bolt,
-      title: copy.filling,
-      subtitle: profile.address,
-      progress: 80,
-      actions: [{ label: copy.cancel, onClick: abortCreate }],
-    });
-    await finishCreate(profile, { filling: true });
+  if (draft.id) {
+    await finishFill(draft, { send });
     return;
   }
   setProgress(8, copy.runningSubtitle);
@@ -923,7 +944,7 @@ async function startCreate() {
     response = await chrome.runtime.sendMessage({
       type: "create-mailbox",
       origin: location.origin,
-      pageUrl: location.href,
+      preview: draft,
     });
   } catch (error) {
     mode = "done";
@@ -931,11 +952,15 @@ async function startCreate() {
       icon: ICONS.mail,
       title: copy.failedTitle,
       subtitle: error.message || copy.failedTitle,
-      actions: [{ label: copy.retry, primary: true, onClick: () => startCreate() }],
+      actions: [{ label: copy.retry, primary: true, onClick: () => confirmChoice(send) }],
     });
     return;
   }
   if (mode !== "running") return;
+  if (response?.locked) {
+    showLocked();
+    return;
+  }
   if (!response?.ok) {
     if (response?.aborted) {
       hideToast({ block: true });
@@ -946,30 +971,50 @@ async function startCreate() {
       icon: ICONS.mail,
       title: copy.failedTitle,
       subtitle: response?.error || copy.failedTitle,
-      actions: [{ label: copy.retry, primary: true, onClick: () => startCreate() }],
+      actions: [{ label: copy.retry, primary: true, onClick: () => confirmChoice(send) }],
     });
     return;
   }
-  mailboxId = response.id;
-  await finishCreate(response);
+  await finishFill(response, { send });
 }
 
-async function showSuggest(found) {
+async function showSuggest(found, existing) {
   current = found;
   mode = "suggest";
-  const profile = await sessionProfile();
+  let preview = existing || null;
+  if (!preview) {
+    let response;
+    try {
+      response = await chrome.runtime.sendMessage({ type: "preview-profile" });
+    } catch {
+      mode = "idle";
+      current = null;
+      return;
+    }
+    if (response?.locked) {
+      showLocked();
+      return;
+    }
+    preview = taken(response);
+  }
   try {
-    await ensureToast();
+    ensureToast();
   } catch {
     mode = "idle";
     current = null;
     return;
   }
-  const reused = Boolean(profile?.address);
+  if (!preview?.sitePassword && !preview?.address) {
+    mode = "idle";
+    current = null;
+    return;
+  }
+  draft = preview;
+  revealIdentity(preview);
   renderCard({
     icon: ICONS.mail,
     title: copy.suggestTitle,
-    subtitle: reused ? `${copy.suggestSession} ${profile.address}` : found.kind === "login" ? copy.suggestLogin : copy.suggestSignup,
+    subtitle: previewSubtitle(preview, found),
     actions: [
       {
         label: copy.later,
@@ -977,7 +1022,8 @@ async function showSuggest(found) {
           rememberDismiss().then(() => hideToast());
         },
       },
-      { label: reused ? copy.use : copy.create, primary: true, onClick: () => startCreate() },
+      { label: copy.fillOnly, onClick: () => confirmChoice(false) },
+      { label: copy.fillSend, primary: true, onClick: () => confirmChoice(true) },
     ],
   });
 }
@@ -1026,6 +1072,7 @@ async function findContinuation() {
     address: filled?.value.trim() || "",
     origin: location.origin,
   });
+  if (response?.locked) return { locked: true };
   if (!response?.ok) return null;
   const address = filled?.value.trim() || "";
   if (address && address.toLowerCase() !== response.profile.address.toLowerCase()) return null;
@@ -1037,26 +1084,6 @@ async function findContinuation() {
     emails: emails.filter((input) => scope.contains(input)),
     profile: response.profile,
   };
-}
-
-async function continueRegistration(found) {
-  blocked = true;
-  current = found;
-  activeProfile = found.profile;
-  mode = "running";
-  mailboxId = found.profile.id;
-  try {
-    await ensureToast();
-    setProgress(80, copy.filling);
-    fillRegistration(found, found.profile);
-  } catch {
-    showFinished({ title: copy.failedTitle, subtitle: copy.fillFailed });
-    return;
-  }
-  const opened = await chrome.runtime.sendMessage({ type: "open-inbox", id: mailboxId, active: false });
-  inboxTabId = opened?.tabId ?? null;
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  reportSubmit(found.profile.address);
 }
 
 async function scan() {
@@ -1073,7 +1100,11 @@ async function scan() {
       }
     }
     const continuation = await findContinuation();
-    if (continuation) await continueRegistration(continuation);
+    if (continuation?.locked) {
+      showLocked();
+      return;
+    }
+    if (continuation?.profile) await showSuggest(continuation, continuation.profile);
   } finally {
     scanLock = false;
   }

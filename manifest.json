@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Trashmail",
+  "name": "Eidon",
   "version": "1.0.0",
-  "description": "Schlägt auf Registrierungsformularen eine Wegwerfadresse vor, füllt das Formular und öffnet den Posteingang.",
+  "description": "Schlägt auf Registrierungsformularen eine Wegwerfadresse vor und füllt das Formular aus. Abgesendet wird nur auf Wunsch.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage", "tabs", "alarms", "scripting"],
+  "permissions": ["storage"],
   "host_permissions": [
     "https://api.mail.tm/*",
     "https://api.mail.gw/*"
@@ -15,7 +15,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Trashmail",
+    "default_title": "Eidon",
     "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/eidon.png",
@@ -33,20 +33,14 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/lib/form-kind.js", "src/content/content.js"],
+      "js": ["src/lib/form-kind.js", "src/content/toast-style.js", "src/content/content.js"],
       "run_at": "document_idle",
-      "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["src/styles/tokens.css", "src/styles/cards.css"],
-      "matches": ["<all_urls>"]
+      "all_frames": false
     }
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "trashmail@bit.extension",
+      "id": "eidon@bit.extension",
       "strict_min_version": "128.0"
     }
   }

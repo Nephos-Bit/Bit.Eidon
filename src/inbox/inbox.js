@@ -22,6 +22,24 @@ let selectedId = "";
 let bodyLoadedFor = "";
 let expired = false;
 let pollTimer = 0;
+let announceInbox = () => {};
+
+function connectInboxPort() {
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: "inbox" });
+  } catch {
+    window.setTimeout(connectInboxPort, 300);
+    return;
+  }
+  announceInbox = () => {
+    if (mailboxId) port.postMessage({ id: mailboxId });
+  };
+  port.onDisconnect.addListener(() => {
+    window.setTimeout(connectInboxPort, 300);
+  });
+  announceInbox();
+}
 
 function asDate(value) {
   const date = new Date(value);
@@ -430,11 +448,20 @@ async function openMessage(id) {
 
 async function refreshMessages(forceBody) {
   const data = await chrome.runtime.sendMessage({ type: "list-messages", id: mailboxId });
+  if (data?.locked) {
+    showStatus("Eidon ist gesperrt", "Entsperre Eidon, damit der Posteingang geladen werden kann.");
+    return;
+  }
   if (!data?.ok) {
     showStatus("Nicht erreichbar", data?.error || "Posteingang nicht erreichbar.");
     return;
   }
-  if (data.id) mailboxId = data.id;
+  if (data.id && data.id !== mailboxId) {
+    mailboxId = data.id;
+    announceInbox();
+  } else if (data.id) {
+    mailboxId = data.id;
+  }
   renderAccount(data);
   if (data.expired) {
     expired = true;
@@ -480,6 +507,7 @@ function startPolling() {
   }, 8000);
 }
 
+connectInboxPort();
 await tick(false);
 startPolling();
 document.addEventListener("visibilitychange", () => {

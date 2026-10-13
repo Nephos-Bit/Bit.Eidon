@@ -8,9 +8,20 @@ export async function listMailboxes() {
 
 export async function saveMailbox(mailbox) {
   const all = await listMailboxes();
-  const next = [mailbox, ...all.filter((item) => item.id !== mailbox.id)].slice(0, MAX);
-  await chrome.storage.local.set({ [KEY]: next });
-  return mailbox;
+  const next = [mailbox, ...all.filter((item) => item.id !== mailbox.id)];
+  const kept = next.slice(0, MAX);
+  const evicted = next.slice(MAX);
+  await chrome.storage.local.set({ [KEY]: kept });
+  return evicted;
+}
+
+export async function replaceMailboxes(mailboxes) {
+  await chrome.storage.local.set({ [KEY]: mailboxes });
+}
+
+export async function removeMailbox(id) {
+  const all = await listMailboxes();
+  await chrome.storage.local.set({ [KEY]: all.filter((item) => item.id !== id) });
 }
 
 export async function getMailbox(id) {

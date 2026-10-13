@@ -1,4 +1,5 @@
 import { providerInfo } from "../lib/mail-client.js";
+import { mountLock } from "../lock/lock-form.js";
 
 const LOGO_URL = new URL("../../icons/eidon.png", import.meta.url).href;
 
@@ -50,8 +51,9 @@ async function copyText(value, button) {
   }, 1200);
 }
 
-function openInbox(id) {
-  chrome.runtime.sendMessage({ type: "open-inbox", id, active: true });
+async function openInbox(id) {
+  const response = await chrome.runtime.sendMessage({ type: "open-inbox", id, active: true }).catch(() => null);
+  if (response?.locked) showLock();
 }
 
 function actionButton(label, primary, onClick) {
@@ -63,12 +65,25 @@ function actionButton(label, primary, onClick) {
   return button;
 }
 
+async function deleteMailbox(id) {
+  const sure = window.confirm(
+    "Der lokale Eintrag wird entfernt. Das Postfach wird beim Anbieter gelöscht, soweit er erreichbar ist.",
+  );
+  if (!sure) return;
+  const response = await chrome.runtime.sendMessage({ type: "delete-mailbox", id }).catch(() => null);
+  if (response?.locked) {
+    showLock();
+    return;
+  }
+  await showMailboxes();
+}
+
 function render(mailboxes) {
   app.replaceChildren();
   if (!mailboxes.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
-    empty.textContent = "Noch keine Trashmail. Auf einer Registrierung erscheint der Vorschlag im Formular.";
+    empty.textContent = "Noch keine Adresse. Auf einer Registrierung erscheint der Vorschlag im Formular.";
     app.append(empty, creditLine());
     return;
   }
@@ -100,6 +115,7 @@ function render(mailboxes) {
   if (latest.sitePassword) {
     actions.append(actionButton("Passwort kopieren", true, (event) => copyText(latest.sitePassword, event.currentTarget)));
   }
+  actions.append(actionButton("Löschen", false, () => deleteMailbox(latest.id)));
   const pill = document.createElement("button");
   pill.type = "button";
   pill.className = "tm-pill";
@@ -124,7 +140,12 @@ function render(mailboxes) {
       meta.textContent = [hostOf(item.origin), formatTime(item.createdAt), lifetimeBit(item)].filter(Boolean).join(" · ");
       button.append(addr, meta);
       button.addEventListener("click", () => openInbox(item.id));
-      entry.append(button);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger";
+      remove.textContent = "Löschen";
+      remove.addEventListener("click", () => deleteMailbox(item.id));
+      entry.append(button, remove);
       history.append(entry);
     }
     app.append(history);
@@ -132,5 +153,19 @@ function render(mailboxes) {
   app.append(creditLine());
 }
 
-const response = await chrome.runtime.sendMessage({ type: "list-mailboxes" }).catch(() => null);
-render(response?.mailboxes || []);
+function showLock() {
+  mountLock(app, { onUnlocked: () => showMailboxes() });
+}
+
+async function showMailboxes() {
+  const response = await chrome.runtime.sendMessage({ type: "list-mailboxes" }).catch(() => null);
+  if (!response?.ok) {
+    showLock();
+    return;
+  }
+  render(response.mailboxes || []);
+}
+
+const status = await chrome.runtime.sendMessage({ type: "lock-status" }).catch(() => null);
+if (!status?.unlocked) showLock();
+else await showMailboxes();

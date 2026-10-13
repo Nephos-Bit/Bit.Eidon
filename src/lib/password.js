@@ -47,18 +47,34 @@ export function generateLocalPart(length = 12) {
 const GIVEN_NAMES = ["Mara", "Jonas", "Lina", "Finn", "Nora", "Luis", "Emma", "Paul", "Ida", "Theo"];
 const FAMILY_NAMES = ["Berger", "Keller", "Hoffmann", "Schwarz", "Wagner", "Krüger", "Neumann", "Schmitt"];
 
+function adultBirth(random) {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const latest = new Date(today);
+  latest.setFullYear(latest.getFullYear() - 18);
+  const earliest = new Date(today);
+  earliest.setFullYear(earliest.getFullYear() - 70);
+  const spanDays = Math.max(1, Math.round((latest.getTime() - earliest.getTime()) / 86400000));
+  const offset = (random[0] + random[1]) % spanDays;
+  const picked = new Date(earliest);
+  picked.setDate(picked.getDate() + offset);
+  if (picked > latest) return latest;
+  return picked;
+}
+
 export function generatePerson() {
-  const random = new Uint32Array(3);
+  const random = new Uint32Array(6);
   crypto.getRandomValues(random);
   const givenName = GIVEN_NAMES[random[0] % GIVEN_NAMES.length];
   const familyName = FAMILY_NAMES[random[1] % FAMILY_NAMES.length];
+  const born = adultBirth([random[2], random[3]]);
   return {
     givenName,
     familyName,
     fullName: `${givenName} ${familyName}`,
-    honorific: random[2] % 2 === 0 ? "Frau" : "Herr",
-    birthDay: "15",
-    birthMonth: "03",
-    birthYear: "1994",
+    honorific: random[4] % 2 === 0 ? "Frau" : "Herr",
+    birthDay: String(born.getDate()).padStart(2, "0"),
+    birthMonth: String(born.getMonth() + 1).padStart(2, "0"),
+    birthYear: String(born.getFullYear()),
   };
 }
