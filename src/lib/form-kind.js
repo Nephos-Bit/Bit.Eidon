@@ -42,14 +42,29 @@
     return null;
   }
 
+  function fullDateFormat(text) {
+    if (/tt\s*[./-]\s*mm\s*[./-]\s*jjjj|dd\s*[./]\s*mm\s*[./]\s*yyyy|dd\s*-\s*mm\s*-\s*yyyy/.test(text)) return "date-de";
+    if (/mm\s*[./-]\s*dd\s*[./-]\s*yyyy/.test(text)) return "date-us";
+    if (/yyyy\s*[./-]\s*mm\s*[./-]\s*dd|jjjj\s*[./-]\s*mm\s*[./-]\s*tt/.test(text)) return "date";
+    return null;
+  }
+
   function classifyBirthField({ hint = "", placeholder = "", autocomplete = "", type = "" }) {
     const auto = String(autocomplete).toLowerCase();
     const place = String(placeholder).trim().toLowerCase();
     const text = `${hint} ${place} ${auto}`.toLowerCase();
-    if (type === "date" || auto === "bday") return "date";
-    if (auto.includes("bday-day") || /^(dd|tt)$/.test(place) || /\b(geburtstag|birth\s*day)\b/.test(text)) return "day";
-    if (auto.includes("bday-month") || place === "mm" || /\b(geburtsmonat|birth\s*month)\b/.test(text)) return "month";
-    if (auto.includes("bday-year") || /^(yyyy|jjjj|jj)$/.test(place) || /\b(geburtsjahr|birth\s*year)\b/.test(text)) return "year";
+    if (auto.includes("bday-day") || /^(dd|tt)$/.test(place)) return "day";
+    if (auto.includes("bday-month") || place === "mm") return "month";
+    if (auto.includes("bday-year") || /^(yyyy|jjjj|jj)$/.test(place)) return "year";
+    if (type === "date") return "date";
+    const format = fullDateFormat(text);
+    if (format) return format;
+    if (auto === "bday" || /geburtsdatum|date of birth|birth\s*date|\bdob\b|\bbirthday\b/.test(text)) {
+      return /geburtsdatum|jjjj|tt\s*[./-]\s*mm/.test(text) ? "date-de" : "date";
+    }
+    if (/\b(geburtstag|birth\s+day)\b/.test(text)) return "day";
+    if (/\b(geburtsmonat|birth\s+month)\b/.test(text)) return "month";
+    if (/\b(geburtsjahr|birth\s+year)\b/.test(text)) return "year";
     return null;
   }
 

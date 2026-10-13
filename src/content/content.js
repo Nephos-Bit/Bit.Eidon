@@ -218,22 +218,66 @@ function setControl(control, value) {
   setValue(control, value);
 }
 
+function dateDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function fillMaskedDate(input, digits, formatted) {
+  setValue(input, digits);
+  if (dateDigits(input.value) !== digits) typeDateDigits(input, digits);
+  if (dateDigits(input.value) === digits && !input.value.includes(".")) {
+    setValue(input, formatted);
+    if (dateDigits(input.value) !== digits) setValue(input, digits);
+  }
+}
+
+function typeDateDigits(input, digits) {
+  input.focus();
+  setNativeValue(input, "");
+  input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+  for (const digit of digits) {
+    const current = input.value;
+    const slot = current.search(/[_\s]/);
+    const next = slot === -1 ? `${current}${digit}` : `${current.slice(0, slot)}${digit}${current.slice(slot + 1)}`;
+    setNativeValue(input, next);
+    const caret = slot === -1 ? next.length : slot + 1;
+    input.setSelectionRange?.(caret, caret);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, data: digit, inputType: "insertText" }));
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function birthHint(control) {
+  return `${fieldHint(control)} ${control.getAttribute("title") || ""} ${control.getAttribute("pattern") || ""}`;
+}
+
 function fillBirth(scope, profile) {
+  const day = profile.birthDay || "15";
+  const month = profile.birthMonth || "03";
+  const year = profile.birthYear || "1994";
   const values = {
-    day: profile.birthDay || "15",
-    month: profile.birthMonth || "03",
-    year: profile.birthYear || "1994",
-    date: `${profile.birthYear || "1994"}-${profile.birthMonth || "03"}-${profile.birthDay || "15"}`,
+    day,
+    month,
+    year,
+    date: `${year}-${month}-${day}`,
+    "date-de": `${day}.${month}.${year}`,
+    "date-us": `${month}/${day}/${year}`,
   };
   for (const control of scope.querySelectorAll("input, select")) {
     if (!isVisible(control)) continue;
     const role = TrashmailForm.classifyBirthField({
-      hint: fieldHint(control),
+      hint: birthHint(control),
       placeholder: control.getAttribute("placeholder") || "",
       autocomplete: control.getAttribute("autocomplete") || "",
       type: control.type || "",
     });
     if (!role) continue;
+    if ((role === "date-de" || role === "date-us") && control instanceof HTMLInputElement && control.type !== "date") {
+      if (control.value.trim()) continue;
+      const formatted = values[role];
+      fillMaskedDate(control, formatted.replace(/\D/g, ""), formatted);
+      continue;
+    }
     setControl(control, values[role]);
   }
 }
@@ -306,16 +350,20 @@ function fillNames(scope, person) {
   }
 }
 
-function setValue(input, value) {
+function setNativeValue(input, value) {
   const prototype = Object.getPrototypeOf(input);
   const descriptor =
     Object.getOwnPropertyDescriptor(prototype, "value") ||
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
   const tracker = input._valueTracker;
   if (tracker) tracker.setValue("");
-  input.focus();
   if (descriptor?.set) descriptor.set.call(input, value);
   else input.value = value;
+}
+
+function setValue(input, value) {
+  input.focus();
+  setNativeValue(input, value);
   input.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -677,7 +725,7 @@ function hasNewRegistrationFields(controls) {
     if (role === "given" || role === "family" || role === "full") return true;
     return Boolean(
       TrashmailForm.classifyBirthField({
-        hint: fieldHint(control),
+        hint: birthHint(control),
         placeholder: control.getAttribute("placeholder") || "",
         autocomplete: control.getAttribute("autocomplete") || "",
         type: control.type || "",

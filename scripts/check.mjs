@@ -27,6 +27,13 @@ assert(classifyNameField({ hint: "Anrede", tag: "select" }) === "honorific", "An
 assert(classifyBirthField({ placeholder: "DD" }) === "day", "Geburtstag");
 assert(classifyBirthField({ placeholder: "MM" }) === "month", "Geburtsmonat");
 assert(classifyBirthField({ placeholder: "YYYY" }) === "year", "Geburtsjahr");
+assert(classifyBirthField({ placeholder: "TT.MM.JJJJ" }) === "date-de", "Geburtsdatum TT.MM.JJJJ");
+assert(classifyBirthField({ hint: "Geburtsdatum", autocomplete: "bday" }) === "date-de", "Geburtsdatum als Text");
+assert(classifyBirthField({ hint: "birthday Geburtsdatum", autocomplete: "bday" }) === "date-de", "birthday bleibt das volle Datum");
+assert(classifyBirthField({ placeholder: "TT", hint: "Tag" }) === "day", "Einzelnes Tagesfeld");
+assert(classifyBirthField({ type: "date", autocomplete: "bday", hint: "Geburtsdatum" }) === "date", "Native Datumsfelder bleiben ISO");
+assert(classifyBirthField({ placeholder: "YYYY-MM-DD", hint: "Date of birth" }) === "date", "ISO-Textfeld");
+assert(classifyBirthField({ placeholder: "MM/DD/YYYY" }) === "date-us", "US-Datum");
 assert(isTermsLabel("Ich bestätige die Geschäftsbedingungen") === true, "AGB");
 assert(isMarketingLabel("Newsletter abonnieren") === true, "Newsletter");
 assert(
