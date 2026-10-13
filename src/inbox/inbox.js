@@ -241,21 +241,16 @@ function renderAccount(data) {
   mark.className = "mark";
   mark.src = LOGO_URL;
   mark.alt = "";
-  const text = document.createElement("div");
-  text.className = "identity-text";
-  const address = document.createElement("p");
-  address.className = "address";
-  address.textContent = data.address;
-  text.append(
-    labelLine("Posteingang", data.address ? copyButton("Adresse kopieren", data.address) : null),
-    address,
-  );
-  identity.append(mark, text);
+  const brand = document.createElement("p");
+  brand.className = "brand";
+  brand.textContent = "EIDON";
+  identity.append(mark, brand);
   const name = [data.givenName, data.familyName].filter(Boolean).join(" ");
   const facts = document.createElement("dl");
   facts.className = "facts";
   if (name) facts.append(fact("Name", name, copyButton("Name kopieren", name)));
-  if (data.sitePassword) facts.append(fact("Passwort der Seite", data.sitePassword, copyButton("Passwort kopieren", data.sitePassword)));
+  if (data.address) facts.append(fact("Mail", data.address, copyButton("Mail kopieren", data.address)));
+  if (data.sitePassword) facts.append(fact("Passwort", data.sitePassword, copyButton("Passwort kopieren", data.sitePassword)));
   account.append(identity);
   if (facts.childElementCount) account.append(facts);
   const info = providerInfo(data.provider);
