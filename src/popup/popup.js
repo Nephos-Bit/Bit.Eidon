@@ -52,8 +52,7 @@ async function copyText(value, button) {
 }
 
 function openInbox(id) {
-  const url = chrome.runtime.getURL(`src/inbox/inbox.html?id=${encodeURIComponent(id)}`);
-  chrome.tabs.create({ url });
+  chrome.runtime.sendMessage({ type: "open-inbox", id, active: true });
 }
 
 function actionButton(label, primary, onClick) {

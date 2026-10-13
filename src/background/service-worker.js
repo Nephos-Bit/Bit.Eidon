@@ -144,8 +144,31 @@ async function handleAbort(_message, sender) {
   return { ok: true };
 }
 
+async function existingInboxTab(id) {
+  const base = chrome.runtime.getURL("src/inbox/inbox.html");
+  try {
+    const tabs = await chrome.tabs.query({ url: `${base}*` });
+    return (
+      tabs.find((tab) => {
+        try {
+          return new URL(tab.url || "").searchParams.get("id") === String(id || "");
+        } catch {
+          return false;
+        }
+      }) || null
+    );
+  } catch {
+    return null;
+  }
+}
+
 async function handleOpenInbox(message) {
   const url = chrome.runtime.getURL(`src/inbox/inbox.html?id=${encodeURIComponent(message.id || "")}`);
+  const existing = await existingInboxTab(message.id);
+  if (existing?.id != null) {
+    if (message.active) await chrome.tabs.update(existing.id, { active: true });
+    return { ok: true, tabId: existing.id };
+  }
   const tab = await chrome.tabs.create({ url, active: !!message.active });
   return { ok: true, tabId: tab.id };
 }
