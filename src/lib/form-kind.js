@@ -1,5 +1,5 @@
 (function (root) {
-  const SIGNUP = /sign\s*up|signup|register|registrieren|create\s+account|konto\s+erstellen|get\s+started/i;
+  const SIGNUP = /sign\s*up|signup|register|registrieren|create\s+(?:an\s+)?account|konto\s+(?:erstellen|anlegen)|get\s+started/i;
   const LOGIN = /sign\s*in|log\s*in|login|anmelden|einloggen/i;
   const CONTINUE = /fortfahren|mit\s+e-?mail|\bweiter\b|\bcontinue\b|\bnext\b|loslegen/i;
   const SOCIAL = /google|apple|facebook|github|microsoft|\bsso\b|passkey/i;
@@ -11,6 +11,18 @@
       .some((line) => CONTINUE.test(line) && !SOCIAL.test(line) && !NEWSLETTER.test(line));
   }
 
+  function actionLines(continueText) {
+    return String(continueText).split("\n");
+  }
+
+  function hasSignupButton(continueText) {
+    return actionLines(continueText).some((line) => SIGNUP.test(line) && !SOCIAL.test(line));
+  }
+
+  function hasLoginButton(continueText) {
+    return actionLines(continueText).some((line) => LOGIN.test(line) && !SIGNUP.test(line) && !SOCIAL.test(line));
+  }
+
   function classifyForm({
     text = "",
     passwordCount = 0,
@@ -18,7 +30,9 @@
     hasCurrentPassword = false,
     continueText = "",
   }) {
-    if (hasNewPassword || passwordCount >= 2 || SIGNUP.test(text)) return "signup";
+    if (hasNewPassword || passwordCount >= 2 || hasSignupButton(continueText)) return "signup";
+    if (passwordCount === 1 && hasLoginButton(continueText)) return "login";
+    if (SIGNUP.test(text)) return "signup";
     if (passwordCount === 0 && hasEmailContinue(continueText)) return "signup";
     if (hasCurrentPassword || LOGIN.test(text) || passwordCount === 1) return "login";
     return null;
@@ -99,7 +113,7 @@
     const auto = String(autocomplete).toLowerCase();
     const text = String(hint).toLowerCase();
     if (auto.includes("one-time-code")) return true;
-    return /verifiz|bestätigungscode|bestaetigungscode|security code|one-time|einmalcode|\botp\b|\bcode\b/.test(text);
+    return /verifiz|verif(?:y|ication)|bestätigungscode|bestaetigungscode|security code|one-time|einmalcode|\botp\b/.test(text);
   }
 
   root.TrashmailForm = {

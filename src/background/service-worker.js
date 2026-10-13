@@ -219,10 +219,12 @@ async function requireUnlock({ open = true } = {}) {
   return false;
 }
 
-async function handlePreview() {
+async function handlePreview(message) {
   if (!(await requireUnlock())) return { ok: false, locked: true };
   const existing = await loadSessionMailbox();
-  if (existing) return { ok: true, reused: true, ...profileFrom(existing) };
+  if (existing && sameHost(existing.origin, message?.origin)) {
+    return { ok: true, reused: true, ...profileFrom(existing) };
+  }
   const person = generatePerson();
   return {
     ok: true,
@@ -238,7 +240,9 @@ async function handleCreate(message, sender) {
   const key = jobKey(sender);
   jobs.get(key)?.abort();
   const existing = await loadSessionMailbox();
-  if (existing) return { ok: true, reused: true, ...profileFrom(existing) };
+  if (existing && sameHost(existing.origin, message?.origin)) {
+    return { ok: true, reused: true, ...profileFrom(existing) };
+  }
   const controller = new AbortController();
   jobs.set(key, controller);
   try {

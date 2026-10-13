@@ -623,8 +623,13 @@ function forceSubmit() {
   });
 }
 
-function visibleControls() {
-  return [...document.querySelectorAll("input, select, textarea")].filter((control) => isVisible(control));
+function formRoot() {
+  return current?.email?.form || current?.scope || null;
+}
+
+function visibleControls(root) {
+  if (!root) return [];
+  return [...root.querySelectorAll("input, select, textarea")].filter((control) => isVisible(control));
 }
 
 function stopAdapt() {
@@ -698,13 +703,7 @@ async function followStep() {
     stopFollow();
     return;
   }
-  const passwords = [
-    ...setupPasswords(root),
-    ...[...root.querySelectorAll('input[type="password"]')].filter(
-      (input) =>
-        isVisible(input) && !input.value.trim() && (input.autocomplete || "").includes("current-password"),
-    ),
-  ];
+  const passwords = setupPasswords(root);
   const codes = codeFields(root);
   const emails = registrationEmails(root).filter((input) => !input.value.trim());
   if (!passwords.length && !codes.length && !emails.length) return;
@@ -722,11 +721,12 @@ async function followStep() {
 
 function hasNewRegistrationFields(controls) {
   return controls.some((control) => {
-    if (control.type === "radio" || control.type === "checkbox") return true;
+    if (control.type === "radio" || control.type === "checkbox") return false;
     if (control.type === "password") {
       return !control.value.trim() && !(control.autocomplete || "").includes("current-password");
     }
-    if (!(control instanceof HTMLInputElement) || control.value.trim()) return false;
+    const fillable = control instanceof HTMLInputElement || control instanceof HTMLSelectElement;
+    if (!fillable || control.value.trim()) return false;
     const role = TrashmailForm.classifyNameField({
       hint: fieldHint(control),
       autocomplete: control.getAttribute("autocomplete") || "",
@@ -751,7 +751,7 @@ function adaptToForm(profile) {
     return;
   }
 
-  const known = new Set(visibleControls());
+  const known = new Set(visibleControls(formRoot()));
   mode = "adapt";
   setProgress(80, copy.adapting);
   const started = Date.now();
@@ -765,10 +765,11 @@ function adaptToForm(profile) {
       stopAdapt();
       return;
     }
-    const fresh = visibleControls().filter((control) => !known.has(control));
+    const root = formRoot();
+    const fresh = visibleControls(root).filter((control) => !known.has(control));
     fresh.forEach((control) => known.add(control));
     if (fresh.length && hasNewRegistrationFields(fresh)) {
-      const scope = current.email?.form || current.scope || document.body;
+      const scope = root || current.scope;
       current.scope = scope;
       current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter((input) => isVisible(input));
       current.kind = "signup";
@@ -985,7 +986,7 @@ async function showSuggest(found, existing) {
   if (!preview) {
     let response;
     try {
-      response = await chrome.runtime.sendMessage({ type: "preview-profile" });
+      response = await chrome.runtime.sendMessage({ type: "preview-profile", origin: location.origin });
     } catch {
       mode = "idle";
       current = null;
@@ -1011,20 +1012,22 @@ async function showSuggest(found, existing) {
   }
   draft = preview;
   revealIdentity(preview);
+  const login = found?.kind === "login";
+  const actions = [
+    {
+      label: copy.later,
+      onClick: () => {
+        rememberDismiss().then(() => hideToast());
+      },
+    },
+    { label: copy.fillOnly, primary: login, onClick: () => confirmChoice(false) },
+  ];
+  if (!login) actions.push({ label: copy.fillSend, primary: true, onClick: () => confirmChoice(true) });
   renderCard({
     icon: ICONS.mail,
     title: copy.suggestTitle,
     subtitle: previewSubtitle(preview, found),
-    actions: [
-      {
-        label: copy.later,
-        onClick: () => {
-          rememberDismiss().then(() => hideToast());
-        },
-      },
-      { label: copy.fillOnly, onClick: () => confirmChoice(false) },
-      { label: copy.fillSend, primary: true, onClick: () => confirmChoice(true) },
-    ],
+    actions,
   });
 }
 

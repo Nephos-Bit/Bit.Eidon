@@ -68,6 +68,22 @@ assert(
   }) === "signup",
   "E-Mail-Schritt neben Social-Login",
 );
+assert(classifyForm({ text: "Create an account", passwordCount: 1 }) === "signup", "create an account");
+assert(classifyForm({ text: "Konto anlegen", passwordCount: 1 }) === "signup", "Konto anlegen");
+assert(
+  classifyForm({
+    text: "Sign in. No account? Sign up",
+    passwordCount: 1,
+    continueText: "Log in",
+  }) === "login",
+  "Signup-Link im Text bleibt Login",
+);
+assert(
+  classifyForm({ text: "Sign in", passwordCount: 1, continueText: "Create an account" }) === "signup",
+  "Signup-Button bleibt Registrierung",
+);
+assert(sandbox.TrashmailForm.looksLikeCodeField({ hint: "Postal code" }) === false, "Postleitzahl ist kein Mailcode");
+assert(sandbox.TrashmailForm.looksLikeCodeField({ hint: "Promo code" }) === false, "Promo-Code ist kein Mailcode");
 
 for (let index = 0; index < 30; index += 1) {
   const password = generatePassword();
@@ -78,6 +94,7 @@ for (let index = 0; index < 30; index += 1) {
 }
 
 assert(extractMailCode("Dein Code lautet 482913") === "482913", "Mailcode");
+assert(extractMailCode("Deine Sendung 482913 ist unterwegs") === "", "Zahl ohne Code-Wort");
 assert(sameHost("https://www.example.com/pfad", "https://example.com"), "www zählt als derselbe Host");
 assert(!sameHost("https://shop.example.com", "https://example.com"), "Subdomain zählt nicht");
 assert(!sameHost("https://example.com.evil.test", "https://example.com"), "fremder Host zählt nicht");
