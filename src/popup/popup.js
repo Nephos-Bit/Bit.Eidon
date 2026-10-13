@@ -1,7 +1,6 @@
 import { providerInfo } from "../lib/mail-client.js";
 
-const CHECK =
-  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>';
+const LOGO_URL = new URL("../../icons/eidon.png", import.meta.url).href;
 
 const app = document.querySelector("#app");
 
@@ -81,9 +80,10 @@ function render(mailboxes) {
   card.className = "tm-card";
   const head = document.createElement("div");
   head.className = "tm-head";
-  const icon = document.createElement("div");
-  icon.className = "tm-icon tm-success";
-  icon.innerHTML = CHECK;
+  const icon = document.createElement("img");
+  icon.className = "tm-logo";
+  icon.src = LOGO_URL;
+  icon.alt = "";
   const text = document.createElement("div");
   const title = document.createElement("h2");
   title.className = "tm-title";

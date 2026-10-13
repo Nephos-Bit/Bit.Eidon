@@ -78,6 +78,12 @@
     return /newsletter|marketing|werbung|angebote|sonderaktion/.test(String(text).toLowerCase());
   }
 
+  function isNewsletterText(text) {
+    const value = String(text || "").toLowerCase();
+    if (/passwor|vorname|nachname|geburt|registrier/.test(value)) return false;
+    return NEWSLETTER.test(value);
+  }
+
   function looksLikePasswordSetup({ hint = "", autocomplete = "", context = "" }) {
     const auto = String(autocomplete).toLowerCase();
     const text = `${hint} ${context}`.toLowerCase();
@@ -112,6 +118,7 @@
     extractMailCode,
     isTermsLabel,
     isMarketingLabel,
+    isNewsletterText,
     isSignupLabel(text) {
       return SIGNUP.test(text || "");
     },

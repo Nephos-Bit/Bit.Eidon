@@ -116,14 +116,30 @@ function classify(scope, passwords, email) {
   });
 }
 
+function isNewsletterEmail(input) {
+  let node = input.parentElement;
+  for (let depth = 0; node && depth < 8; depth += 1, node = node.parentElement) {
+    const text = (node.innerText || "").replace(/\s+/g, " ").slice(0, 500);
+    if (!TrashmailForm.isNewsletterText(text)) continue;
+    return true;
+  }
+  return false;
+}
+
+function registrationEmails(scope) {
+  return [...scope.querySelectorAll("input")].filter(
+    (input) => isEmailInput(input) && isVisible(input) && !isNewsletterEmail(input),
+  );
+}
+
 function findCandidate() {
   for (const email of document.querySelectorAll("input")) {
-    if (!isEmailInput(email) || !isVisible(email) || email.value.trim()) continue;
+    if (!isEmailInput(email) || !isVisible(email) || email.value.trim() || isNewsletterEmail(email)) continue;
     const scope = scopeOf(email);
     const passwords = [...scope.querySelectorAll('input[type="password"]')].filter(isVisible);
     const kind = classify(scope, passwords, email);
     if (!kind) continue;
-    const emails = [...scope.querySelectorAll("input")].filter((input) => isEmailInput(input) && isVisible(input));
+    const emails = registrationEmails(scope);
     return { email, scope, kind, passwords, emails };
   }
   return null;
@@ -311,20 +327,25 @@ function fillTerms(scope) {
   }
 }
 
-function fillPasswords(passwords, sitePassword) {
+function fillPasswords(passwords, sitePassword, { signup = false } = {}) {
   if (!sitePassword) return;
   for (const input of passwords) {
     if (!isVisible(input) || input.value.trim()) continue;
-    if ((input.autocomplete || "").includes("current-password")) continue;
+    if (!signup && (input.autocomplete || "").includes("current-password")) continue;
     setValue(input, sitePassword);
   }
 }
 
 function fillRegistration(found, profile) {
-  found.emails?.forEach((input) => {
-    if (!input.value.trim()) setValue(input, profile.address);
+  const emails = registrationEmails(found.scope);
+  (emails.length ? emails : found.emails || []).forEach((input) => {
+    if (!input.isConnected || input.value.trim() || isNewsletterEmail(input)) return;
+    setValue(input, profile.address);
   });
-  fillPasswords(found.passwords || [], profile.sitePassword);
+  const livePasswords = [...found.scope.querySelectorAll('input[type="password"]')].filter(isVisible);
+  fillPasswords(livePasswords.length ? livePasswords : found.passwords || [], profile.sitePassword, {
+    signup: found.kind !== "login",
+  });
   fillNames(found.scope, profile);
   fillBirth(found.scope, profile);
   fillGender(found.scope);
@@ -691,17 +712,28 @@ async function followStep() {
     stopFollow();
     return;
   }
-  const passwords = setupPasswords(document);
+  const passwords = [
+    ...setupPasswords(document),
+    ...[...document.querySelectorAll('input[type="password"]')].filter(
+      (input) =>
+        isVisible(input) && !input.value.trim() && (input.autocomplete || "").includes("current-password"),
+    ),
+  ];
   const codes = codeFields(document);
-  if (!passwords.length && !codes.length) return;
   const scope = passwords[0]?.form || codes[0]?.form || current.scope || document.body;
+  const emails = registrationEmails(scope).filter((input) => !input.value.trim());
+  if (!passwords.length && !codes.length && !emails.length) return;
   current.scope = scope;
   current.kind = "signup";
   let acted = false;
+  if (emails.length) {
+    emails.forEach((input) => setValue(input, activeProfile.address));
+    acted = true;
+  }
   if (passwords.length && followPasswordTries < 4) {
     followPasswordTries += 1;
     current.passwords = passwords;
-    fillPasswords(passwords, activeProfile.sitePassword);
+    fillPasswords(passwords, activeProfile.sitePassword, { signup: true });
     fillNames(scope, activeProfile);
     fillBirth(scope, activeProfile);
     acted = true;

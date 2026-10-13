@@ -4,7 +4,8 @@ import { generateLocalPart, generatePassword } from "../src/lib/password.js";
 
 const sandbox = {};
 runInContext(readFileSync(new URL("../src/lib/form-kind.js", import.meta.url), "utf8"), createContext(sandbox));
-const { classifyForm, classifyNameField, classifyBirthField, isSignupLabel, isTermsLabel, isMarketingLabel } = sandbox.TrashmailForm;
+const { classifyForm, classifyNameField, classifyBirthField, isSignupLabel, isTermsLabel, isMarketingLabel, isNewsletterText } =
+  sandbox.TrashmailForm;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -36,6 +37,8 @@ assert(classifyBirthField({ placeholder: "YYYY-MM-DD", hint: "Date of birth" }) 
 assert(classifyBirthField({ placeholder: "MM/DD/YYYY" }) === "date-us", "US-Datum");
 assert(isTermsLabel("Ich bestätige die Geschäftsbedingungen") === true, "AGB");
 assert(isMarketingLabel("Newsletter abonnieren") === true, "Newsletter");
+assert(isNewsletterText("Newsletter abonnieren") === true, "Newsletter-Feld");
+assert(isNewsletterText("Vorname Passwort Newsletter") === false, "Registrierung bleibt kein Newsletter");
 assert(
   classifyForm &&
     TrashmailFormLooks(sandbox),
