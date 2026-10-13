@@ -3,6 +3,28 @@ import { generatePassword, generatePerson } from "../lib/password.js";
 import { getMailbox, listMailboxes, saveMailbox, updateMailbox } from "../lib/storage.js";
 
 const jobs = new Map();
+const SESSION_MAILBOX = "sessionMailboxId";
+
+async function loadSessionMailbox() {
+  try {
+    const stored = await chrome.storage.session.get(SESSION_MAILBOX);
+    const id = stored[SESSION_MAILBOX];
+    if (!id) return null;
+    const mailbox = await getMailbox(id);
+    if (!mailbox || isMailboxExpired(mailbox)) return null;
+    return mailbox;
+  } catch {
+    return null;
+  }
+}
+
+async function rememberSessionMailbox(id) {
+  try {
+    await chrome.storage.session.set({ [SESSION_MAILBOX]: id });
+  } catch {
+    // Ohne Session-Speicher bleibt jede Seite bei einer eigenen Adresse.
+  }
+}
 
 function jobKey(sender) {
   return `${sender.tab?.id ?? "x"}:${sender.frameId ?? 0}`;
@@ -72,6 +94,8 @@ function mailboxView(mailbox) {
 async function handleCreate(message, sender) {
   const key = jobKey(sender);
   jobs.get(key)?.abort();
+  const existing = await loadSessionMailbox();
+  if (existing) return { ok: true, reused: true, ...profileFrom(existing) };
   const controller = new AbortController();
   jobs.set(key, controller);
   try {
@@ -93,6 +117,7 @@ async function handleCreate(message, sender) {
       createdAt: Date.now(),
     };
     await saveMailbox(record);
+    await rememberSessionMailbox(record.id);
     return {
       ok: true,
       id: record.id,
@@ -102,6 +127,9 @@ async function handleCreate(message, sender) {
       familyName: person.familyName,
       fullName: person.fullName,
       honorific: person.honorific,
+      birthDay: person.birthDay,
+      birthMonth: person.birthMonth,
+      birthYear: person.birthYear,
     };
   } catch (error) {
     if (controller.signal.aborted || error.name === "AbortError") return { ok: false, aborted: true };
@@ -191,6 +219,12 @@ function sameSite(left, right) {
   }
 }
 
+async function handleSessionProfile() {
+  const mailbox = await loadSessionMailbox();
+  if (!mailbox) return { ok: false };
+  return { ok: true, profile: profileFrom(mailbox) };
+}
+
 async function handleContinuation(message) {
   const mailboxes = await listMailboxes();
   const address = String(message.address || "").trim().toLowerCase();
@@ -246,6 +280,7 @@ const handlers = {
   "get-message": handleGetMessage,
   "list-mailboxes": handleListMailboxes,
   "continuation-profile": handleContinuation,
+  "session-profile": handleSessionProfile,
 };
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

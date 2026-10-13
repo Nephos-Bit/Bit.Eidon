@@ -5,8 +5,10 @@ const copy = {
   suggestTitle: "Trashmail verwenden?",
   suggestSignup: "Wegwerfadresse für diese Registrierung.",
   suggestLogin: "Wegwerfadresse erzeugen. Ein Login wird nicht abgesendet.",
+  suggestSession: "Dieselbe Adresse aus dieser Sitzung:",
   later: "Später",
   create: "Erstellen",
+  use: "Verwenden",
   runningTitle: "Adresse wird erstellt…",
   runningSubtitle: "Bitte warten, die Trashmail wird angelegt.",
   cancel: "Abbrechen",
@@ -798,14 +800,14 @@ function adaptToForm(profile, hadPasswordAtStart) {
   }, 300);
 }
 
-async function finishCreate(response) {
+async function finishCreate(response, { filling = false } = {}) {
   const opened = await chrome.runtime.sendMessage({ type: "open-inbox", id: mailboxId, active: false });
   inboxTabId = opened?.tabId ?? null;
   if (mode !== "running" || !current) return;
 
   const hadPasswordAtStart = (current.passwords || []).length > 0;
   try {
-    setProgress(80, copy.filling);
+    if (!filling) setProgress(80, copy.filling);
     const scope = current.email?.form || current.scope || document.body;
     current.scope = scope;
     current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter((input) => isVisible(input));
@@ -850,6 +852,15 @@ function reportSubmit(address) {
   showFinished({ title: copy.doneTitle, subtitle: address });
 }
 
+async function sessionProfile() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "session-profile" });
+    return response?.ok ? response.profile : null;
+  } catch {
+    return null;
+  }
+}
+
 async function startCreate() {
   if (!current || mode === "running") return;
   mode = "running";
@@ -858,6 +869,20 @@ async function startCreate() {
     await ensureToast();
   } catch {
     mode = "idle";
+    return;
+  }
+  const profile = await sessionProfile();
+  if (mode !== "running" || !current) return;
+  if (profile?.address) {
+    mailboxId = profile.id;
+    renderCard({
+      icon: ICONS.bolt,
+      title: copy.filling,
+      subtitle: profile.address,
+      progress: 80,
+      actions: [{ label: copy.cancel, onClick: abortCreate }],
+    });
+    await finishCreate(profile, { filling: true });
     return;
   }
   setProgress(8, copy.runningSubtitle);
@@ -900,6 +925,7 @@ async function startCreate() {
 async function showSuggest(found) {
   current = found;
   mode = "suggest";
+  const profile = await sessionProfile();
   try {
     await ensureToast();
   } catch {
@@ -907,10 +933,11 @@ async function showSuggest(found) {
     current = null;
     return;
   }
+  const reused = Boolean(profile?.address);
   renderCard({
     icon: ICONS.mail,
     title: copy.suggestTitle,
-    subtitle: found.kind === "login" ? copy.suggestLogin : copy.suggestSignup,
+    subtitle: reused ? `${copy.suggestSession} ${profile.address}` : found.kind === "login" ? copy.suggestLogin : copy.suggestSignup,
     actions: [
       {
         label: copy.later,
@@ -918,7 +945,7 @@ async function showSuggest(found) {
           rememberDismiss().then(() => hideToast());
         },
       },
-      { label: copy.create, primary: true, onClick: () => startCreate() },
+      { label: reused ? copy.use : copy.create, primary: true, onClick: () => startCreate() },
     ],
   });
 }
