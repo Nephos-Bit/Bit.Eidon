@@ -82,6 +82,8 @@ assert(
   classifyForm({ text: "Sign in", passwordCount: 1, continueText: "Create an account" }) === "signup",
   "Signup-Button bleibt Registrierung",
 );
+assert(classifyForm({ text: "Passwort", passwordCount: 1, continueText: "Weiter" }) === "signup", "Passwort-Schritt bleibt Registrierung");
+assert(classifyForm({ text: "Anmelden", passwordCount: 1, continueText: "Anmelden" }) === "login", "Login-Schritt bleibt Login");
 assert(sandbox.TrashmailForm.looksLikeCodeField({ hint: "Postal code" }) === false, "Postleitzahl ist kein Mailcode");
 assert(sandbox.TrashmailForm.looksLikeCodeField({ hint: "Promo code" }) === false, "Promo-Code ist kein Mailcode");
 

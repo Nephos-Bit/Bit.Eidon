@@ -8,8 +8,9 @@ const copy = {
   providerNote:
     "mail.tm behält Nachrichten etwa 7 Tage, das Konto läuft hier nicht ab. Fallback mail.gw: Konto und Nachrichten 10 Minuten. Die Adresse nur verwenden, wo die Seite das erlaubt.",
   later: "Später",
+  create: "Erstellen",
+  use: "Verwenden",
   fillOnly: "Nur ausfüllen",
-  fillSend: "Ausfüllen und senden",
   runningTitle: "Adresse wird erstellt…",
   runningSubtitle: "Bitte warten, die Adresse wird angelegt.",
   cancel: "Abbrechen",
@@ -320,11 +321,21 @@ function fillGender(scope) {
   }
 }
 
+function isCurrentPassword(input) {
+  return (input.autocomplete || "").includes("current-password");
+}
+
+function signupPasswordInputs(root = document) {
+  return [...root.querySelectorAll('input[type="password"]')].filter(
+    (input) => isVisible(input) && !input.value.trim() && !isCurrentPassword(input),
+  );
+}
+
 function fillPasswords(passwords, sitePassword, { signup = false } = {}) {
   if (!sitePassword) return;
   for (const input of passwords) {
     if (!isVisible(input) || input.value.trim()) continue;
-    if (!signup && (input.autocomplete || "").includes("current-password")) continue;
+    if (!signup && isCurrentPassword(input)) continue;
     setValue(input, sitePassword);
   }
 }
@@ -335,8 +346,9 @@ function fillRegistration(found, profile) {
     if (!input.isConnected || input.value.trim() || isNewsletterEmail(input)) return;
     setValue(input, profile.address);
   });
-  const livePasswords = [...found.scope.querySelectorAll('input[type="password"]')].filter(isVisible);
-  fillPasswords(livePasswords.length ? livePasswords : found.passwords || [], profile.sitePassword, {
+  const livePasswords = signupPasswordInputs(found.scope);
+  const pagePasswords = signupPasswordInputs(document);
+  fillPasswords(livePasswords.length ? livePasswords : pagePasswords, profile.sitePassword, {
     signup: found.kind !== "login",
   });
   fillNames(found.scope, profile);
@@ -623,10 +635,6 @@ function forceSubmit() {
   });
 }
 
-function formRoot() {
-  return current?.email?.form || current?.scope || null;
-}
-
 function visibleControls(root) {
   if (!root) return [];
   return [...root.querySelectorAll("input, select, textarea")].filter((control) => isVisible(control));
@@ -635,18 +643,6 @@ function visibleControls(root) {
 function stopAdapt() {
   clearInterval(passwordWatch);
   passwordWatch = 0;
-}
-
-function setupPasswords(root) {
-  return [...root.querySelectorAll('input[type="password"]')].filter((input) => {
-    if (!isVisible(input) || input.value.trim()) return false;
-    const box = input.closest("form, section, main");
-    return TrashmailForm.looksLikePasswordSetup({
-      hint: fieldHint(input),
-      autocomplete: input.getAttribute("autocomplete") || "",
-      context: (box?.innerText || "").slice(0, 800),
-    });
-  });
 }
 
 function codeFields(root) {
@@ -694,8 +690,7 @@ function startFollow(profile) {
 }
 
 async function followStep() {
-  const root = confirmedRoot?.isConnected ? confirmedRoot : null;
-  if (!activeProfile || !root) {
+  if (!activeProfile) {
     stopFollow();
     return;
   }
@@ -703,20 +698,35 @@ async function followStep() {
     stopFollow();
     return;
   }
-  const passwords = setupPasswords(root);
-  const codes = codeFields(root);
-  const emails = registrationEmails(root).filter((input) => !input.value.trim());
+  const passwords = signupPasswordInputs(document);
+  const root = (confirmedRoot?.isConnected && confirmedRoot) || passwords[0]?.form || current?.scope || null;
+  const codes = root ? codeFields(root) : [];
+  const emails = root ? registrationEmails(root).filter((input) => !input.value.trim()) : [];
   if (!passwords.length && !codes.length && !emails.length) return;
+  let acted = false;
   if (emails.length && activeProfile.address) {
     emails.forEach((input) => setValue(input, activeProfile.address));
+    acted = true;
   }
   if (passwords.length && followPasswordTries < 4) {
     followPasswordTries += 1;
+    const scope = passwords[0].form || root || scopeOf(passwords[0]);
     fillPasswords(passwords, activeProfile.sitePassword, { signup: true });
-    fillNames(root, activeProfile);
-    fillBirth(root, activeProfile);
+    fillNames(scope, activeProfile);
+    fillBirth(scope, activeProfile);
+    if (current) {
+      current.scope = scope;
+      current.kind = "signup";
+      current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter(isVisible);
+      if (!current.email?.isConnected) current.email = passwords[0];
+    }
+    acted = passwords.some((input) => input.value.trim());
   }
-  if (codes.length) await fillCodeFields(codes, activeProfile.id);
+  if (codes.length && (await fillCodeFields(codes, activeProfile.id))) acted = true;
+  if (!acted || !current) return;
+  stopFollow();
+  mode = "running";
+  setTimeout(() => reportSubmit(activeProfile.address), 200);
 }
 
 function hasNewRegistrationFields(controls) {
@@ -744,18 +754,34 @@ function hasNewRegistrationFields(controls) {
   });
 }
 
+function advanceWith(profile) {
+  mode = "running";
+  setTimeout(() => reportSubmit(profile.address), 200);
+}
+
 function adaptToForm(profile) {
   activeProfile = profile;
-  if ((current.passwords || []).some((input) => input.value.trim())) {
-    setTimeout(() => reportSubmit(profile.address), 150);
+  const pending = signupPasswordInputs(document);
+  if (pending.length) {
+    fillPasswords(pending, profile.sitePassword, { signup: true });
+    const scope = pending[0].form || current.scope || scopeOf(pending[0]);
+    current.scope = scope;
+    current.kind = "signup";
+    current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter(isVisible);
+    if (pending.every((input) => input.value.trim())) {
+      advanceWith(profile);
+      return;
+    }
+  } else if ((current.passwords || []).some((input) => input.value.trim())) {
+    advanceWith(profile);
     return;
   }
 
-  const known = new Set(visibleControls(formRoot()));
+  const known = new Set(visibleControls(document));
   mode = "adapt";
   setProgress(80, copy.adapting);
   const started = Date.now();
-  const button = findSubmit(current.email);
+  const button = current.email?.isConnected ? findSubmit(current.email) : null;
   if (button && !button.disabled && TrashmailForm.isContinueLabel(buttonText(button))) {
     button.click();
   }
@@ -765,37 +791,32 @@ function adaptToForm(profile) {
       stopAdapt();
       return;
     }
-    const root = formRoot();
-    const fresh = visibleControls(root).filter((control) => !known.has(control));
+    const fresh = visibleControls(document).filter((control) => !known.has(control));
     fresh.forEach((control) => known.add(control));
-    if (fresh.length && hasNewRegistrationFields(fresh)) {
-      const scope = root || current.scope;
-      current.scope = scope;
-      current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter((input) => isVisible(input));
-      current.kind = "signup";
-      try {
-        fillRegistration(current, profile);
-      } catch {
+    const appeared = signupPasswordInputs(document);
+    if (!(fresh.length && hasNewRegistrationFields(fresh)) && !appeared.length) {
+      if (Date.now() - started > 12000) {
         stopAdapt();
-        showFinished({ title: copy.failedTitle, subtitle: copy.fillFailed });
-        return;
+        showFinished({ title: copy.doneTitle, subtitle: profile.address });
       }
-      stopAdapt();
-      mode = "running";
-      setTimeout(() => reportSubmit(profile.address), 200);
       return;
     }
-    if (Date.now() - started > 12000) {
+    const anchor = appeared[0] || fresh[0];
+    const scope = anchor?.form || (anchor ? scopeOf(anchor) : current.scope);
+    current.scope = scope;
+    current.passwords = [...scope.querySelectorAll('input[type="password"]')].filter(isVisible);
+    current.kind = "signup";
+    if (!current.email?.isConnected && anchor) current.email = anchor;
+    try {
+      fillRegistration(current, profile);
+      fillPasswords(signupPasswordInputs(document), profile.sitePassword, { signup: true });
+    } catch {
       stopAdapt();
-      showFinished(
-        current.kind === "login"
-          ? {
-              title: copy.loginDoneTitle,
-              subtitle: `${profile.address} — ${copy.loginDoneSubtitle}`,
-            }
-          : { title: copy.doneTitle, subtitle: profile.address },
-      );
+      showFinished({ title: copy.failedTitle, subtitle: copy.fillFailed });
+      return;
     }
+    stopAdapt();
+    advanceWith(profile);
   }, 300);
 }
 
@@ -1020,9 +1041,10 @@ async function showSuggest(found, existing) {
         rememberDismiss().then(() => hideToast());
       },
     },
-    { label: copy.fillOnly, primary: login, onClick: () => confirmChoice(false) },
+    login
+      ? { label: copy.fillOnly, primary: true, onClick: () => confirmChoice(false) }
+      : { label: preview.address ? copy.use : copy.create, primary: true, onClick: () => confirmChoice(true) },
   ];
-  if (!login) actions.push({ label: copy.fillSend, primary: true, onClick: () => confirmChoice(true) });
   renderCard({
     icon: ICONS.mail,
     title: copy.suggestTitle,
@@ -1060,16 +1082,28 @@ async function findContinuation() {
     });
     return role === "given" || role === "family" || role === "full";
   });
-  if (!emptyPassword && !emptyName) return null;
+  if (!emptyPassword && !emptyName && !codeFields(scope).length) return null;
   const kind = classify(scope, scopePasswords, filled || anchor);
-  if (kind === "login" && !emptyName && scopePasswords.length < 2 && !scopePasswords.some((input) => {
+  const stepButton = findSubmit(filled || anchor);
+  const stepLabel = stepButton ? buttonText(stepButton) : "";
+  const loginStep =
+    TrashmailForm.isLoginLabel(stepLabel) &&
+    !TrashmailForm.isSignupLabel(stepLabel) &&
+    !TrashmailForm.isContinueLabel(stepLabel);
+  const setupPassword = scopePasswords.some((input) => {
     const box = input.closest("form, section, main");
-    return TrashmailForm.looksLikePasswordSetup({
-      hint: fieldHint(input),
-      autocomplete: input.getAttribute("autocomplete") || "",
-      context: (box?.innerText || "").slice(0, 800),
-    });
-  }) && !codeFields(scope).length) return null;
+    return (
+      (input.autocomplete || "").includes("new-password") ||
+      TrashmailForm.looksLikePasswordSetup({
+        hint: fieldHint(input),
+        autocomplete: input.getAttribute("autocomplete") || "",
+        context: (box?.innerText || "").slice(0, 800),
+      })
+    );
+  });
+  if (kind === "login" && loginStep && !emptyName && scopePasswords.length < 2 && !setupPassword && !codeFields(scope).length) {
+    return null;
+  }
   const response = await chrome.runtime.sendMessage({
     type: "continuation-profile",
     address: filled?.value.trim() || "",
@@ -1087,6 +1121,32 @@ async function findContinuation() {
     emails: emails.filter((input) => scope.contains(input)),
     profile: response.profile,
   };
+}
+
+async function continueRegistration(found) {
+  blocked = true;
+  current = found;
+  activeProfile = found.profile;
+  mode = "running";
+  mailboxId = found.profile.id;
+  confirmedRoot = found.email?.form || found.scope || null;
+  draft = found.profile;
+  try {
+    ensureToast();
+    setProgress(80, copy.filling);
+    fillRegistration(found, found.profile);
+    fillPasswords(signupPasswordInputs(document), found.profile.sitePassword, { signup: true });
+  } catch {
+    showFinished({ title: copy.failedTitle, subtitle: copy.fillFailed });
+    return;
+  }
+  const opened = await chrome.runtime.sendMessage({ type: "open-inbox", id: mailboxId, active: false }).catch(() => null);
+  if (opened?.locked) {
+    showLocked();
+    return;
+  }
+  inboxTabId = opened?.tabId ?? null;
+  adaptToForm(found.profile);
 }
 
 async function scan() {
@@ -1107,7 +1167,7 @@ async function scan() {
       showLocked();
       return;
     }
-    if (continuation?.profile) await showSuggest(continuation, continuation.profile);
+    if (continuation?.profile) await continueRegistration(continuation);
   } finally {
     scanLock = false;
   }

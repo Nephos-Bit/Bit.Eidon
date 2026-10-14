@@ -7,13 +7,13 @@ Eidon erkennt ein Registrierungsformular auf der Seite und zeigt eine Karte. Die
 
 Bevor Zugangsdaten lesbar sind, muss die Sperre gesetzt oder entsperrt sein. Die Sperre liegt im Popup. Startet die Aktion auf der Website und die Sitzung hat noch keinen Schlüssel, öffnet der Service Worker die Sperrseite. Die Website sieht die Eingabe nicht.
 
-Zwei Aktionen: „Nur ausfüllen“ schreibt die Felder und öffnet den Posteingang. „Ausfüllen und senden“ schreibt die Felder und sendet das Formular, einschließlich eines Weiter-Klicks auf derselben Seite. Ein Login wird nur mit der Adresse befüllt und nicht abgesendet. Eine Folge-Seite zeigt dieselbe Karte mit der vorhandenen Adresse, statt still weiterzumachen. Ein Bestätigungscode wird nur in das bestätigte Formular eingetragen. Der Posteingang bleibt offen und prüft neue Nachrichten, solange er sichtbar ist.
+Ein Klick auf „Erstellen“ schreibt die Felder, geht den nächsten Schritt auf derselben Seite und sendet das Formular. Ein Login wird nur mit der Adresse befüllt und nicht abgesendet. Eine Folge-Seite mit derselben Adresse füllt weiter und geht den nächsten Schritt, ohne noch einmal zu fragen. Ein Bestätigungscode wird nur in das bestätigte Formular eingetragen. Der Posteingang bleibt offen und prüft neue Nachrichten, solange er sichtbar ist.
 
 Lokal verschlüsselt liegen das Website-Passwort und das Passwort des Postfachs (PBKDF2 und AES-GCM). Salt, Runden und ein Prüfwert liegen daneben. Der abgeleitete Schlüssel und der Bearer-Token liegen nur in der Sitzung. Nach einem Browser-Neustart holt die Erweiterung den Token über die Anmeldung beim Anbieter neu. An mail.tm oder mail.gw gehen die Wegwerfadresse, das Postfach-Passwort und der Abruf der Nachrichten.
 
 mail.tm behält Nachrichten etwa 7 Tage. Das Konto führt diese Erweiterung nicht als abgelaufen. mail.gw ist der Fallback: Konto und Nachrichten laufen nach 10 Minuten ab.
 
-Was nicht passiert: keine AGB und keine Marketing-Checkbox, kein stilles Absenden, kein automatisches Weiter nach „Nur ausfüllen“, kein Treffer über Subdomains, keine gespeicherte Seiten-URL, kein Minuten-Alarm im Hintergrund, keine externen Bilder in Mails.
+Was nicht passiert: keine AGB und keine Marketing-Checkbox, kein Absenden eines Logins, kein Treffer über Subdomains, keine gespeicherte Seiten-URL, kein Minuten-Alarm im Hintergrund, keine externen Bilder in Mails.
 
 Eine vergessene Sperre macht die lokalen Geheimnisse unlesbar. Remote löschen braucht das Postfach-Passwort und geht dann nicht mehr. „Sperre zurücksetzen“ löscht nur die lokale Kopie und sagt das vorher. Die Postfächer beim Anbieter bleiben bestehen.
 

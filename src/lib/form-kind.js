@@ -23,6 +23,12 @@
     return actionLines(continueText).some((line) => LOGIN.test(line) && !SIGNUP.test(line) && !SOCIAL.test(line));
   }
 
+  function hasContinueButton(continueText) {
+    return actionLines(continueText).some(
+      (line) => CONTINUE.test(line) && !LOGIN.test(line) && !SIGNUP.test(line) && !SOCIAL.test(line),
+    );
+  }
+
   function classifyForm({
     text = "",
     passwordCount = 0,
@@ -34,7 +40,9 @@
     if (passwordCount === 1 && hasLoginButton(continueText)) return "login";
     if (SIGNUP.test(text)) return "signup";
     if (passwordCount === 0 && hasEmailContinue(continueText)) return "signup";
-    if (hasCurrentPassword || LOGIN.test(text) || passwordCount === 1) return "login";
+    if (hasCurrentPassword || LOGIN.test(text)) return "login";
+    if (passwordCount === 1 && hasContinueButton(continueText)) return "signup";
+    if (passwordCount === 1) return "login";
     return null;
   }
 
