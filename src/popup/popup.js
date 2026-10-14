@@ -1,4 +1,5 @@
 import { providerInfo } from "../lib/mail-client.js";
+import { iconPages } from "../lib/host.js";
 import { usedAt } from "../lib/identity.js";
 import { mountLock } from "../lock/lock-form.js";
 
@@ -31,13 +32,58 @@ function personName(item) {
   return [item.givenName, item.familyName].filter(Boolean).join(" ");
 }
 
+function titleOf(item) {
+  return personName(item) || item.address;
+}
+
 function lifetimeBit(item) {
   if (!item.expiresAt) return "";
   return item.expiresAt <= Date.now() ? "abgelaufen" : "läuft ab";
 }
 
 function metaLine(item) {
-  return [personName(item), hostOf(item.origin), formatTime(usedAt(item)), lifetimeBit(item)].filter(Boolean).join(" · ");
+  const mail = personName(item) ? item.address : "";
+  return [mail, hostOf(item.origin), formatTime(usedAt(item)), lifetimeBit(item)].filter(Boolean).join(" · ");
+}
+
+function faviconSources(item) {
+  const pages = iconPages(item?.origin, item?.iconPage);
+  if (globalThis.browser) return pages.map((page) => new URL("/favicon.ico", page).href);
+  return pages.map((page) => {
+    const url = new URL(chrome.runtime.getURL("/_favicon/"));
+    url.searchParams.set("pageUrl", page);
+    url.searchParams.set("size", "32");
+    return url.toString();
+  });
+}
+
+function siteIcon(item, className) {
+  const icon = document.createElement("img");
+  icon.className = className;
+  icon.alt = "";
+  const sources = [];
+  if (typeof item?.iconData === "string" && item.iconData.startsWith("data:image/png")) sources.push(item.iconData);
+  sources.push(...faviconSources(item));
+  let index = 0;
+  const advance = () => {
+    if (index >= sources.length) {
+      icon.removeEventListener("error", advance);
+      icon.src = LOGO_URL;
+      return;
+    }
+    icon.src = sources[index];
+    index += 1;
+  };
+  icon.addEventListener("error", advance);
+  advance();
+  return icon;
+}
+
+async function refreshIconsFromTabs() {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  await Promise.all(
+    tabs.map((tab) => (tab.id == null ? null : chrome.tabs.sendMessage(tab.id, { type: "capture-icon" }).catch(() => null))),
+  );
 }
 
 function creditLine() {
@@ -130,7 +176,11 @@ function visibleMailboxes(mailboxes) {
   if (!needle) return sorted;
   return sorted.filter((item) => {
     const host = hostOf(item.origin).toLowerCase();
-    return item.address.toLowerCase().includes(needle) || host.includes(needle);
+    return (
+      item.address.toLowerCase().includes(needle) ||
+      host.includes(needle) ||
+      personName(item).toLowerCase().includes(needle)
+    );
   });
 }
 
@@ -277,14 +327,11 @@ function paintList(mailboxes) {
   card.className = "tm-card";
   const head = document.createElement("div");
   head.className = "tm-head";
-  const icon = document.createElement("img");
-  icon.className = "tm-logo";
-  icon.src = LOGO_URL;
-  icon.alt = "";
+  const icon = siteIcon(latest, "tm-logo");
   const text = document.createElement("div");
   const title = document.createElement("h2");
   title.className = "tm-title";
-  title.textContent = latest.address;
+  title.textContent = titleOf(latest);
   const subtitle = document.createElement("p");
   subtitle.className = "tm-subtitle";
   subtitle.textContent = metaLine(latest);
@@ -315,13 +362,16 @@ function paintList(mailboxes) {
       const entry = document.createElement("li");
       const button = document.createElement("button");
       button.type = "button";
+      const copy = document.createElement("span");
+      copy.className = "identity-copy";
       const addr = document.createElement("span");
       addr.className = "addr";
-      addr.textContent = item.address;
+      addr.textContent = titleOf(item);
       const meta = document.createElement("span");
       meta.className = "meta";
       meta.textContent = metaLine(item);
-      button.append(addr, meta);
+      copy.append(addr, meta);
+      button.append(siteIcon(item, "site-icon"), copy);
       button.addEventListener("click", () => openInbox(item.id));
       entry.append(button, deleteActions(item));
       history.append(entry);
@@ -334,6 +384,8 @@ function showLock() {
   mountLock(app, { onUnlocked: () => showMailboxes() });
 }
 
+let iconRefresh = null;
+
 async function showMailboxes() {
   const response = await chrome.runtime.sendMessage({ type: "list-mailboxes" }).catch(() => null);
   if (!response?.ok) {
@@ -341,6 +393,15 @@ async function showMailboxes() {
     return;
   }
   render(response.mailboxes || []);
+  if (iconRefresh) return;
+  iconRefresh = refreshIconsFromTabs()
+    .then(async () => {
+      const again = await chrome.runtime.sendMessage({ type: "list-mailboxes" }).catch(() => null);
+      if (again?.ok) render(again.mailboxes || []);
+    })
+    .finally(() => {
+      iconRefresh = null;
+    });
 }
 
 const status = await chrome.runtime.sendMessage({ type: "lock-status" }).catch(() => null);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pageOrigin, sameHost, sameSite } from "../src/lib/host.js";
+import { iconPages, pageOrigin, sameHost, sameSite } from "../src/lib/host.js";
 
 test("www zählt als derselbe Host", () => {
   assert.equal(sameHost("https://www.example.com/pfad", "https://example.com"), true);
@@ -25,4 +25,16 @@ test("Schema und Port trennen Websites", () => {
 
 test("Subdomain ist keine gleiche Website", () => {
   assert.equal(sameSite("https://shop.example.com", "https://example.com"), false);
+});
+
+test("Icon-Suche probiert www vor der gespeicherten Origin", () => {
+  assert.deepEqual(iconPages("https://thalia.de"), ["https://www.thalia.de/", "https://thalia.de/"]);
+});
+
+test("besuchte Seite steht vor den Origin-Varianten", () => {
+  assert.deepEqual(iconPages("https://snipes.com", "https://www.snipes.com/shop/account?x=1#teil"), [
+    "https://www.snipes.com/shop/account",
+    "https://www.snipes.com/",
+    "https://snipes.com/",
+  ]);
 });

@@ -23,3 +23,31 @@ export function sameSite(left, right) {
     return false;
   }
 }
+
+export function iconPages(origin, iconPage) {
+  const pages = [];
+  const push = (value) => {
+    if (value && !pages.includes(value)) pages.push(value);
+  };
+  const variants = (value) => {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return;
+      url.hash = "";
+      url.search = "";
+      const host = url.hostname.replace(/^www\./, "");
+      const port = url.port ? `:${url.port}` : "";
+      const bare = `${url.protocol}//${host}${port}/`;
+      const withWww = `${url.protocol}//www.${host}${port}/`;
+      const exact = url.toString();
+      if (exact !== bare && exact !== withWww) push(exact);
+      push(withWww);
+      push(bare);
+    } catch {
+      // Ungültige Adressen liefern kein Icon.
+    }
+  };
+  if (iconPage) variants(iconPage);
+  if (origin) variants(origin);
+  return pages;
+}

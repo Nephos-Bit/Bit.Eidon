@@ -22,11 +22,27 @@ body {
   padding-right: 0;
 }
 
-.tm-logo {
+.tm-logo,
+.site-icon {
   flex: none;
+  object-fit: contain;
+  background: #fff;
+}
+
+.tm-logo {
   width: 36px;
   height: 36px;
-  object-fit: contain;
+  padding: 4px;
+  box-sizing: border-box;
+  border-radius: 10px;
+}
+
+.site-icon {
+  width: 22px;
+  height: 22px;
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: 6px;
 }
 
 .tm-card {
@@ -123,8 +139,9 @@ body {
 
 .history button:not(.text-btn) {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   margin-top: 8px;
   padding: 10px 12px;
@@ -135,6 +152,14 @@ body {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.history .identity-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .history .addr {
@@ -148,6 +173,10 @@ body {
   color: var(--tm-muted, rgba(60, 60, 67, 0.72));
   font-size: 12px;
   line-height: 16px;
+}
+
+.history .meta {
+  word-break: break-all;
 }
 
 .empty {

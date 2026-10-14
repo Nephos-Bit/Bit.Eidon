@@ -1210,11 +1210,89 @@ function scheduleScan() {
   scanTimer = setTimeout(scan, 350);
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+function iconCandidateUrls() {
+  const found = [];
+  for (const link of document.querySelectorAll("link[rel]")) {
+    const rel = link.rel.toLowerCase().split(/\s+/);
+    if (!rel.includes("icon") && !rel.includes("apple-touch-icon")) continue;
+    if (link.href) found.push(link.href);
+  }
+  found.push(new URL("/favicon.ico", location.origin).href);
+  found.push(new URL("/apple-touch-icon.png", location.origin).href);
+  const unique = [];
+  for (const href of found) {
+    try {
+      const url = new URL(href, location.href);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      if (!unique.includes(url.href)) unique.push(url.href);
+    } catch {
+      // Ungültige Icon-Adresse.
+    }
+  }
+  unique.sort((left, right) => {
+    const rank = (value) => (new URL(value).origin === location.origin ? 0 : 1);
+    return rank(left) - rank(right);
+  });
+  return unique;
+}
+
+function loadIconImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    if (new URL(url).origin !== location.origin) image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("icon"));
+    image.src = url;
+  });
+}
+
+async function rasterIcon(url) {
+  const image = await loadIconImage(url);
+  if (!image.naturalWidth || !image.naturalHeight) throw new Error("icon");
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  canvas.getContext("2d").drawImage(image, 0, 0, 64, 64);
+  const data = canvas.toDataURL("image/png");
+  if (!data.startsWith("data:image/png") || data.length > 100000) throw new Error("icon");
+  return data;
+}
+
+let iconTask = null;
+
+function capturePageIcon() {
+  if (location.protocol !== "http:" && location.protocol !== "https:") return Promise.resolve("");
+  if (!iconTask) {
+    iconTask = (async () => {
+      for (const url of iconCandidateUrls()) {
+        try {
+          const icon = await rasterIcon(url);
+          await chrome.runtime.sendMessage({ type: "note-icon", icon });
+          return icon;
+        } catch {
+          // Nächster Kandidat.
+        }
+      }
+      iconTask = null;
+      return "";
+    })();
+  }
+  return iconTask;
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "mailbox-progress" && mode === "running") {
     setProgress(message.percent, message.label);
   }
+  if (message?.type === "capture-icon") {
+    capturePageIcon()
+      .then((icon) => sendResponse({ ok: Boolean(icon) }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
 });
+
+capturePageIcon();
 
 if (document.documentElement) {
   const observer = new MutationObserver(scheduleScan);

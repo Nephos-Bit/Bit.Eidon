@@ -1,6 +1,6 @@
 import { createMailbox, deleteAccount, fetchMessage, fetchMessages, isMailboxExpired, login, mailboxExpiresAt } from "../lib/mail-client.js";
 import { extractMailCode } from "../lib/mail-code.js";
-import { pageOrigin, sameSite } from "../lib/host.js";
+import { iconPages, pageOrigin, sameSite } from "../lib/host.js";
 import { identityKind, usedAt } from "../lib/identity.js";
 import { generatePassword, generatePerson } from "../lib/password.js";
 import { exportBackup, hasLock, importBackup, isUnlocked, openRecord, resetLock, sealRecord, setPassphrase, unlock } from "../lib/secrets.js";
@@ -20,6 +20,7 @@ const CONTENT_TYPES = new Set([
   "open-inbox",
   "open-lock",
   "use-mailbox",
+  "note-icon",
 ]);
 const PAGE_TYPES = new Set([
   "list-messages",
@@ -163,6 +164,8 @@ function publicMailbox(item) {
     givenName: item.givenName || "",
     familyName: item.familyName || "",
     origin: item.origin,
+    iconPage: item.iconPage || "",
+    iconData: item.iconData || "",
     createdAt: item.createdAt,
     lastUsedAt: item.lastUsedAt || 0,
     kind: identityKind(item),
@@ -307,6 +310,33 @@ async function handleCreate(message, sender) {
   } finally {
     if (jobs.get(key) === controller) jobs.delete(key);
   }
+}
+
+function iconKey(value) {
+  const pages = iconPages("", value);
+  return pages[0] || "";
+}
+
+function iconPayload(value) {
+  if (typeof value !== "string" || !value.startsWith("data:image/png;base64,")) return "";
+  if (value.length > 100000) return "";
+  return value;
+}
+
+async function handleNoteIcon(message, sender) {
+  const page = iconKey(sender?.url || "");
+  if (!page) return { ok: false };
+  const icon = iconPayload(message?.icon);
+  const all = await listMailboxes();
+  for (const item of all) {
+    if (!sameSite(item.origin, page)) continue;
+    const patch = {};
+    if (item.iconPage !== page) patch.iconPage = page;
+    if (icon && item.iconData !== icon) patch.iconData = icon;
+    if (!Object.keys(patch).length) continue;
+    await updateMailbox(item.id, patch);
+  }
+  return { ok: true };
 }
 
 async function handleUse(message, sender) {
@@ -542,6 +572,7 @@ const handlers = {
   "preview-profile": handlePreview,
   "create-mailbox": handleCreate,
   "use-mailbox": handleUse,
+  "note-icon": handleNoteIcon,
   "abort-create": handleAbort,
   "open-inbox": handleOpenInbox,
   "open-lock": handleOpenLock,

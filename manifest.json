@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Schlägt auf Registrierungsformularen eine Wegwerfadresse vor und füllt das Formular aus. Abgesendet wird nur auf Wunsch.",
   "minimum_chrome_version": "120",
-  "permissions": ["storage"],
+  "permissions": ["storage", "favicon"],
   "host_permissions": [
     "https://api.mail.tm/*",
     "https://api.mail.gw/*"
