@@ -1,9 +1,10 @@
 import { createMailbox, deleteAccount, fetchMessage, fetchMessages, isMailboxExpired, login, mailboxExpiresAt } from "../lib/mail-client.js";
 import { extractMailCode } from "../lib/mail-code.js";
-import { sameHost } from "../lib/host.js";
+import { pageOrigin, sameSite } from "../lib/host.js";
+import { identityKind, usedAt } from "../lib/identity.js";
 import { generatePassword, generatePerson } from "../lib/password.js";
-import { hasLock, isUnlocked, openRecord, resetLock, sealRecord, setPassphrase, unlock } from "../lib/secrets.js";
-import { getMailbox, listMailboxes, removeMailbox, saveMailbox } from "../lib/storage.js";
+import { exportBackup, hasLock, importBackup, isUnlocked, openRecord, resetLock, sealRecord, setPassphrase, unlock } from "../lib/secrets.js";
+import { getMailbox, listMailboxes, removeMailbox, saveMailbox, updateMailbox } from "../lib/storage.js";
 
 const jobs = new Map();
 const inboxTabs = new Map();
@@ -18,12 +19,16 @@ const CONTENT_TYPES = new Set([
   "peek-code",
   "open-inbox",
   "open-lock",
+  "use-mailbox",
 ]);
 const PAGE_TYPES = new Set([
   "list-messages",
   "get-message",
   "list-mailboxes",
   "delete-mailbox",
+  "rename-mailbox",
+  "export-backup",
+  "import-backup",
   "set-lock",
   "unlock",
   "reset-lock",
@@ -62,6 +67,14 @@ async function rememberSessionMailbox(id) {
 async function clearSessionMailbox(id) {
   const stored = await chrome.storage.session.get(SESSION_MAILBOX);
   if (stored[SESSION_MAILBOX] === id) await chrome.storage.session.remove(SESSION_MAILBOX);
+}
+
+function senderPage(sender) {
+  try {
+    return pageOrigin(sender?.url || "");
+  } catch {
+    return "";
+  }
 }
 
 function jobKey(sender) {
@@ -147,8 +160,12 @@ function publicMailbox(item) {
     id: item.id,
     address: item.address,
     sitePassword: item.sitePassword,
+    givenName: item.givenName || "",
+    familyName: item.familyName || "",
     origin: item.origin,
     createdAt: item.createdAt,
+    lastUsedAt: item.lastUsedAt || 0,
+    kind: identityKind(item),
     provider: item.provider || "",
     expiresAt: mailboxExpiresAt(item),
   };
@@ -219,30 +236,41 @@ async function requireUnlock({ open = true } = {}) {
   return false;
 }
 
-async function handlePreview(message) {
-  if (!(await requireUnlock())) return { ok: false, locked: true };
-  const existing = await loadSessionMailbox();
-  if (existing && sameHost(existing.origin, message?.origin)) {
-    return { ok: true, reused: true, ...profileFrom(existing) };
-  }
-  const person = generatePerson();
+function freshProfile() {
   return {
     ok: true,
     reused: false,
+    hasMore: false,
     address: "",
     sitePassword: generatePassword(16),
-    ...person,
+    ...generatePerson(),
   };
+}
+
+async function matchesFor(origin, skipIds) {
+  const skip = new Set(Array.isArray(skipIds) ? skipIds.map(String) : []);
+  const mailboxes = await openedMailboxes();
+  return mailboxes
+    .filter((item) => !skip.has(String(item.id)) && !isMailboxExpired(item) && sameSite(item.origin, origin))
+    .sort((left, right) => usedAt(right) - usedAt(left));
+}
+
+async function handlePreview(message, sender) {
+  if (!(await requireUnlock())) return { ok: false, locked: true };
+  const origin = senderPage(sender);
+  if (!origin) return { ok: false };
+  if (message?.fresh) return freshProfile();
+  const matches = await matchesFor(origin, message?.skipIds);
+  if (!matches.length) return freshProfile();
+  return { ok: true, reused: true, hasMore: matches.length > 1, ...profileFrom(matches[0]) };
 }
 
 async function handleCreate(message, sender) {
   if (!(await requireUnlock())) return { ok: false, locked: true };
+  const origin = senderPage(sender);
+  if (!origin) return { ok: false, error: "Die Website konnte nicht geprüft werden." };
   const key = jobKey(sender);
   jobs.get(key)?.abort();
-  const existing = await loadSessionMailbox();
-  if (existing && sameHost(existing.origin, message?.origin)) {
-    return { ok: true, reused: true, ...profileFrom(existing) };
-  }
   const controller = new AbortController();
   jobs.set(key, controller);
   try {
@@ -251,6 +279,7 @@ async function handleCreate(message, sender) {
     });
     if (created.token) await writeToken(created.id, created.token);
     const person = personFrom(message.preview);
+    const now = Date.now();
     const record = {
       id: created.id,
       address: created.address,
@@ -263,8 +292,10 @@ async function handleCreate(message, sender) {
       birthDay: person.birthDay,
       birthMonth: person.birthMonth,
       birthYear: person.birthYear,
-      origin: message.origin || "",
-      createdAt: Date.now(),
+      origin,
+      createdAt: now,
+      lastUsedAt: now,
+      kind: "temporary",
     };
     const evicted = await saveMailbox(await sealRecord(record));
     await rememberSessionMailbox(record.id);
@@ -276,6 +307,20 @@ async function handleCreate(message, sender) {
   } finally {
     if (jobs.get(key) === controller) jobs.delete(key);
   }
+}
+
+async function handleUse(message, sender) {
+  if (!(await requireUnlock())) return { ok: false, locked: true };
+  if (!message?.id) return { ok: false };
+  const origin = senderPage(sender);
+  const sealed = await getMailbox(message.id);
+  if (!sealed || !origin || !sameSite(sealed.origin, origin)) return { ok: false };
+  if (isMailboxExpired(sealed)) return { ok: false, error: "Das Postfach ist nicht mehr erreichbar." };
+  await updateMailbox(sealed.id, { lastUsedAt: Date.now() });
+  await rememberSessionMailbox(sealed.id);
+  const opened = await openRecord(await getMailbox(sealed.id));
+  if (!opened) return { ok: false, locked: true };
+  return { ok: true, ...profileFrom(opened) };
 }
 
 async function handleAbort(_message, sender) {
@@ -354,10 +399,11 @@ async function handlePeekCode(message) {
   return { ok: true, code: String(code || "").replace(/\D/g, "") };
 }
 
-async function handleSessionProfile() {
+async function handleSessionProfile(_message, sender) {
   if (!(await requireUnlock())) return { ok: false, locked: true };
   const mailbox = await loadSessionMailbox();
-  if (!mailbox) return { ok: false };
+  const origin = senderPage(sender);
+  if (!mailbox || !origin || !sameSite(mailbox.origin, origin)) return { ok: false };
   return { ok: true, profile: profileFrom(mailbox) };
 }
 
@@ -370,18 +416,24 @@ async function openedMailboxes() {
   return open;
 }
 
-async function handleContinuation(message) {
+async function handleContinuation(message, sender) {
   if (!(await requireUnlock())) return { ok: false, locked: true };
+  const origin = senderPage(sender);
+  if (!origin) return { ok: false };
   const mailboxes = await openedMailboxes();
   const address = String(message.address || "").trim().toLowerCase();
-  const byAddress = address ? mailboxes.find((item) => item.address.toLowerCase() === address) : null;
+  const byAddress = address
+    ? mailboxes.find((item) => item.address.toLowerCase() === address && sameSite(item.origin, origin))
+    : null;
   if (byAddress) {
     if (isMailboxExpired(byAddress)) return { ok: false };
     return { ok: true, profile: profileFrom(byAddress) };
   }
+  const session = await loadSessionMailbox();
+  if (session && sameSite(session.origin, origin)) return { ok: true, profile: profileFrom(session) };
   const recent = Date.now() - 6 * 60 * 60 * 1000;
   const bySite = mailboxes.find(
-    (item) => item.createdAt > recent && !isMailboxExpired(item) && sameHost(item.origin, message.origin),
+    (item) => item.createdAt > recent && !isMailboxExpired(item) && sameSite(item.origin, origin),
   );
   if (!bySite) return { ok: false };
   return { ok: true, profile: profileFrom(bySite) };
@@ -396,12 +448,15 @@ async function handleListMailboxes() {
 
 async function handleDelete(message) {
   if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
-  const mailbox = await openRecord(await getMailbox(message.id));
-  if (mailbox?.mailboxPassword && mailbox.provider) {
-    try {
-      await withToken(mailbox, (token) => deleteAccount(mailbox.provider, token, mailbox.id));
-    } catch {
-      // Der lokale Eintrag wird trotzdem entfernt.
+  if (!message?.id) return { ok: false };
+  if (message.remote) {
+    const mailbox = await openRecord(await getMailbox(message.id));
+    if (mailbox?.mailboxPassword && mailbox.provider) {
+      try {
+        await withToken(mailbox, (token) => deleteAccount(mailbox.provider, token, mailbox.id));
+      } catch {
+        // Der lokale Eintrag wird trotzdem entfernt.
+      }
     }
   }
   await removeMailbox(message.id);
@@ -409,6 +464,31 @@ async function handleDelete(message) {
   await clearSessionMailbox(message.id);
   inboxTabs.delete(String(message.id || ""));
   return { ok: true };
+}
+
+async function handleRename(message) {
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  if (!message?.id) return { ok: false };
+  const givenName = String(message.givenName || "").trim().slice(0, 80);
+  const familyName = String(message.familyName || "").trim().slice(0, 80);
+  if (!givenName || !familyName) return { ok: false, error: "Vorname und Nachname werden gebraucht." };
+  const stored = await getMailbox(message.id);
+  if (!stored) return { ok: false, error: "Keine Mailbox" };
+  await updateMailbox(stored.id, { givenName, familyName });
+  return { ok: true };
+}
+
+async function handleExport() {
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  return exportBackup();
+}
+
+async function handleImport(message) {
+  if (!(await requireUnlock({ open: false }))) return { ok: false, locked: true };
+  const result = await importBackup(message.backup, message.passphrase);
+  if (!result.ok) return result;
+  if (result.evicted?.length) await forgetRemote(result.evicted);
+  return { ok: true, added: result.added, dropped: result.evicted?.length || 0 };
 }
 
 function passphraseError(passphrase) {
@@ -461,6 +541,7 @@ async function refreshBadge() {
 const handlers = {
   "preview-profile": handlePreview,
   "create-mailbox": handleCreate,
+  "use-mailbox": handleUse,
   "abort-create": handleAbort,
   "open-inbox": handleOpenInbox,
   "open-lock": handleOpenLock,
@@ -469,6 +550,9 @@ const handlers = {
   "peek-code": handlePeekCode,
   "list-mailboxes": handleListMailboxes,
   "delete-mailbox": handleDelete,
+  "rename-mailbox": handleRename,
+  "export-backup": handleExport,
+  "import-backup": handleImport,
   "continuation-profile": handleContinuation,
   "session-profile": handleSessionProfile,
   "set-lock": handleSetLock,

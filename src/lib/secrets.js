@@ -1,4 +1,4 @@
-import { listMailboxes, replaceMailboxes } from "./storage.js";
+import { appendMailboxes, listMailboxes, replaceMailboxes } from "./storage.js";
 
 export const PBKDF2_ITERATIONS = 600000;
 
@@ -126,24 +126,27 @@ export async function resetLock() {
   await chrome.storage.session.remove([SESSION_SECRET, "mailboxTokens", "sessionMailboxId"]);
 }
 
-export async function openRecord(record) {
-  if (!record) return null;
-  const key = await sessionCryptoKey();
-  if (!key) return null;
+function stripRecord(record) {
   const next = { ...record };
   delete next.token;
   delete next.pageUrl;
+  return next;
+}
+
+function hasPlainPassword(record) {
+  return [record?.sitePassword, record?.mailboxPassword].some((value) => typeof value === "string" && value);
+}
+
+async function decryptFields(key, record) {
+  if (!record) return null;
+  const next = stripRecord(record);
   if (isCipher(next.sitePassword)) next.sitePassword = await decryptText(key, next.sitePassword);
   if (isCipher(next.mailboxPassword)) next.mailboxPassword = await decryptText(key, next.mailboxPassword);
   return next;
 }
 
-export async function sealRecord(record) {
-  const key = await sessionCryptoKey();
-  if (!key) throw new Error("locked");
-  const next = { ...record };
-  delete next.token;
-  delete next.pageUrl;
+async function encryptFields(key, record) {
+  const next = stripRecord(record);
   if (typeof next.sitePassword === "string" && next.sitePassword) {
     next.sitePassword = await encryptText(key, next.sitePassword);
   }
@@ -151,4 +154,87 @@ export async function sealRecord(record) {
     next.mailboxPassword = await encryptText(key, next.mailboxPassword);
   }
   return next;
+}
+
+function lockMaterial(lock) {
+  return {
+    salt: lock.salt,
+    iterations: lock.iterations || PBKDF2_ITERATIONS,
+    verifier: lock.verifier,
+  };
+}
+
+function sameLock(left, right) {
+  return left.salt === right.salt && left.iterations === right.iterations;
+}
+
+export async function openRecord(record) {
+  const key = await sessionCryptoKey();
+  if (!key) return null;
+  return decryptFields(key, record);
+}
+
+export async function sealRecord(record) {
+  const key = await sessionCryptoKey();
+  if (!key) throw new Error("locked");
+  return encryptFields(key, record);
+}
+
+export async function exportBackup() {
+  const lock = await readLock();
+  if (!lock?.salt || !lock.verifier) return { ok: false, error: "Lege zuerst eine Sperre an." };
+  let rows = await listMailboxes();
+  if (rows.some(hasPlainPassword)) {
+    const key = await sessionCryptoKey();
+    if (!key) return { ok: false, error: "Entsperre Eidon, damit die Passwörter verschlüsselt exportiert werden." };
+    rows = [];
+    for (const item of await listMailboxes()) rows.push(await encryptFields(key, item));
+    await replaceMailboxes(rows);
+  }
+  return {
+    ok: true,
+    backup: {
+      v: 1,
+      lock: lockMaterial(lock),
+      mailboxes: rows.map(stripRecord),
+    },
+  };
+}
+
+export async function importBackup(file, passphrase) {
+  if (typeof passphrase !== "string" || !passphrase) return { ok: false, error: "Die Sperre stimmt nicht." };
+  const stated = file?.lock;
+  const rows = Array.isArray(file?.mailboxes) ? file.mailboxes : null;
+  if (!stated?.salt || !stated?.verifier || !rows) return { ok: false, error: "Die Datei ist keine Eidon-Sicherung." };
+  const fileLock = lockMaterial(stated);
+  let fileKey;
+  try {
+    fileKey = await deriveAesKey(passphrase, b64ToBytes(fileLock.salt), fileLock.iterations);
+    const text = await decryptText(fileKey, fileLock.verifier);
+    if (text !== VERIFIER_TEXT) return { ok: false, error: "Die Sperre stimmt nicht." };
+  } catch {
+    return { ok: false, error: "Die Sperre stimmt nicht." };
+  }
+  const local = await readLock();
+  if (!local?.salt || !local?.verifier) return { ok: false, error: "Lege zuerst eine Sperre an." };
+  const localLock = lockMaterial(local);
+  const matching = sameLock(localLock, fileLock);
+  const session = await sessionCryptoKey();
+  if (!matching && !session) {
+    return { ok: false, error: "Entsperre Eidon, damit die Einträge neu verschlüsselt werden können." };
+  }
+  const existing = new Set((await listMailboxes()).map((item) => item.id));
+  const incoming = rows.filter((item) => item?.id && !existing.has(item.id));
+  const prepared = [];
+  try {
+    for (const item of incoming) {
+      if (matching) prepared.push(await encryptFields(fileKey, item));
+      else prepared.push(await encryptFields(session, await decryptFields(fileKey, item)));
+    }
+  } catch {
+    return { ok: false, error: "Die Sicherung lässt sich nicht lesen." };
+  }
+  if (!prepared.length) return { ok: true, added: 0, evicted: [] };
+  const stored = await appendMailboxes(prepared);
+  return { ok: true, added: stored.added, evicted: stored.evicted };
 }

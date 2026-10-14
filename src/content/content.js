@@ -4,13 +4,14 @@ const CAPTCHA =
 const copy = {
   suggestTitle: "Eidon verwenden?",
   suggestSignup: "Wegwerfadresse für diese Registrierung.",
-  suggestLogin: "Wegwerfadresse erzeugen. Ein Login wird nicht abgesendet.",
+  suggestLogin: "Neue Wegwerfadresse. Das Login wird nicht abgesendet.",
   providerNote:
     "mail.tm behält Nachrichten etwa 7 Tage, das Konto läuft hier nicht ab. Fallback mail.gw: Konto und Nachrichten 10 Minuten. Die Adresse nur verwenden, wo die Seite das erlaubt.",
   later: "Später",
-  create: "Erstellen",
-  use: "Verwenden",
-  fillOnly: "Nur ausfüllen",
+  fill: "Ausfüllen",
+  fillAndSend: "Ausfüllen und senden",
+  fresh: "Neu",
+  nextIdentity: "Andere",
   runningTitle: "Adresse wird erstellt…",
   runningSubtitle: "Bitte warten, die Adresse wird angelegt.",
   cancel: "Abbrechen",
@@ -24,7 +25,7 @@ const copy = {
   sendNow: "Jetzt senden",
   noSubmitTitle: "Felder ausgefüllt",
   noSubmitSubtitle: "Senden-Button nicht gefunden.",
-  loginDoneTitle: "Adresse eingesetzt",
+  loginDoneTitle: "Zugangsdaten eingesetzt",
   loginDoneSubtitle: "Das Login wurde nicht abgesendet.",
   adapting: "Neue Felder werden ergänzt, sobald sie erscheinen.",
   invalidTitle: "Formular unvollständig",
@@ -56,6 +57,7 @@ let followWatch = 0;
 let activeProfile = null;
 let confirmedRoot = null;
 let draft = null;
+let skippedIds = [];
 let followStartedAt = 0;
 let followPasswordTries = 0;
 let lastCodePoll = 0;
@@ -870,6 +872,12 @@ async function finishFill(profile, { send }) {
     if (current.kind === "login") {
       stopFollow();
       if (isEmailInput(current.email) && profile.address && !current.email.value.trim()) setValue(current.email, profile.address);
+      if (profile.sitePassword) {
+        for (const input of current.passwords || []) {
+          if (!isVisible(input) || input.value.trim()) continue;
+          setValue(input, profile.sitePassword);
+        }
+      }
       activeProfile = null;
       showQuiet({
         title: copy.loginDoneTitle,
@@ -933,17 +941,8 @@ function previewSubtitle(profile, found) {
   if (!profile.address) bits.push(found?.kind === "login" ? copy.suggestLogin : copy.suggestSignup);
   if (profile.address) bits.push(profile.address);
   if (person) bits.push(person);
-  if (profile.sitePassword) bits.push(`Passwort ${profile.sitePassword}`);
   bits.push(copy.providerNote);
   return bits.join(" ");
-}
-
-function revealIdentity(profile) {
-  if (!current || !profile) return;
-  if (profile.address && isEmailInput(current.email) && !current.email.value.trim() && !isNewsletterEmail(current.email)) {
-    setValue(current.email, profile.address);
-  }
-  fillNames(current.scope, profile);
 }
 
 async function confirmChoice(send) {
@@ -957,7 +956,23 @@ async function confirmChoice(send) {
     return;
   }
   if (draft.id) {
-    await finishFill(draft, { send });
+    const used = await chrome.runtime.sendMessage({ type: "use-mailbox", id: draft.id }).catch(() => null);
+    if (mode !== "running") return;
+    if (used?.locked) {
+      showLocked();
+      return;
+    }
+    if (!used?.ok) {
+      mode = "done";
+      renderCard({
+        icon: ICONS.mail,
+        title: copy.failedTitle,
+        subtitle: used?.error || copy.fillFailed,
+        actions: [{ label: copy.retry, primary: true, onClick: () => confirmChoice(send) }],
+      });
+      return;
+    }
+    await finishFill(taken(used) || draft, { send });
     return;
   }
   setProgress(8, copy.runningSubtitle);
@@ -965,7 +980,6 @@ async function confirmChoice(send) {
   try {
     response = await chrome.runtime.sendMessage({
       type: "create-mailbox",
-      origin: location.origin,
       preview: draft,
     });
   } catch (error) {
@@ -1000,25 +1014,26 @@ async function confirmChoice(send) {
   await finishFill(response, { send });
 }
 
-async function showSuggest(found, existing) {
+async function showSuggest(found, { fresh = false } = {}) {
   current = found;
   mode = "suggest";
-  let preview = existing || null;
-  if (!preview) {
-    let response;
-    try {
-      response = await chrome.runtime.sendMessage({ type: "preview-profile", origin: location.origin });
-    } catch {
-      mode = "idle";
-      current = null;
-      return;
-    }
-    if (response?.locked) {
-      showLocked();
-      return;
-    }
-    preview = taken(response);
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage({
+      type: "preview-profile",
+      fresh,
+      skipIds: fresh ? [] : skippedIds,
+    });
+  } catch {
+    mode = "idle";
+    current = null;
+    return;
   }
+  if (response?.locked) {
+    showLocked();
+    return;
+  }
+  const preview = taken(response);
   try {
     ensureToast();
   } catch {
@@ -1032,7 +1047,6 @@ async function showSuggest(found, existing) {
     return;
   }
   draft = preview;
-  revealIdentity(preview);
   const login = found?.kind === "login";
   const actions = [
     {
@@ -1041,10 +1055,28 @@ async function showSuggest(found, existing) {
         rememberDismiss().then(() => hideToast());
       },
     },
-    login
-      ? { label: copy.fillOnly, primary: true, onClick: () => confirmChoice(false) }
-      : { label: preview.address ? copy.use : copy.create, primary: true, onClick: () => confirmChoice(true) },
   ];
+  if (preview.address) {
+    actions.push({
+      label: copy.fresh,
+      onClick: () => {
+        skippedIds = [];
+        showSuggest(found, { fresh: true });
+      },
+    });
+  }
+  if (preview.hasMore && preview.id) {
+    const currentId = preview.id;
+    actions.push({
+      label: copy.nextIdentity,
+      onClick: () => {
+        skippedIds = [...skippedIds, currentId];
+        showSuggest(found);
+      },
+    });
+  }
+  actions.push({ label: copy.fill, primary: true, onClick: () => confirmChoice(false) });
+  if (!login) actions.push({ label: copy.fillAndSend, onClick: () => confirmChoice(true) });
   renderCard({
     icon: ICONS.mail,
     title: copy.suggestTitle,
@@ -1107,7 +1139,6 @@ async function findContinuation() {
   const response = await chrome.runtime.sendMessage({
     type: "continuation-profile",
     address: filled?.value.trim() || "",
-    origin: location.origin,
   });
   if (response?.locked) return { locked: true };
   if (!response?.ok) return null;
@@ -1158,6 +1189,7 @@ async function scan() {
     if (!dismissed) {
       const found = findCandidate();
       if (found) {
+        skippedIds = [];
         await showSuggest(found);
         return;
       }

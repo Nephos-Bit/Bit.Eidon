@@ -53,7 +53,8 @@ body {
   line-height: 18px;
 }
 
-.lock input {
+.lock input,
+.filter {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 12px;
@@ -62,6 +63,10 @@ body {
   background: var(--tm-grouped);
   color: inherit;
   font: inherit;
+}
+
+.filter {
+  margin-bottom: 12px;
 }
 
 .lock .tm-action {
@@ -85,13 +90,29 @@ body {
 
 .history li {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
 
-.history .danger {
-  flex: none;
-  padding: 8px;
+.history .ops,
+.tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.history .ops {
+  width: 100%;
+  margin: 0 0 4px;
+}
+
+.tools {
+  margin-top: 14px;
+}
+
+.text-btn {
+  padding: 4px 0;
   border: 0;
   background: none;
   color: var(--tm-muted, rgba(60, 60, 67, 0.72));
@@ -100,7 +121,7 @@ body {
   cursor: pointer;
 }
 
-.history button:not(.danger) {
+.history button:not(.text-btn) {
   display: flex;
   flex-direction: column;
   gap: 2px;

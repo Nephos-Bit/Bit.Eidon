@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
-import { sameHost } from "../src/lib/host.js";
+import { pageOrigin, sameHost, sameSite } from "../src/lib/host.js";
+import { identityKind } from "../src/lib/identity.js";
 import { extractMailCode } from "../src/lib/mail-code.js";
 import { generateLocalPart, generatePassword, generatePerson } from "../src/lib/password.js";
 import { PBKDF2_ITERATIONS, decryptText, deriveAesKey, encryptText } from "../src/lib/secrets.js";
@@ -101,6 +102,13 @@ assert(sameHost("https://www.example.com/pfad", "https://example.com"), "www zä
 assert(!sameHost("https://shop.example.com", "https://example.com"), "Subdomain zählt nicht");
 assert(!sameHost("https://example.com.evil.test", "https://example.com"), "fremder Host zählt nicht");
 assert(!sameHost("keine-url", "https://example.com"), "kaputte URL zählt nicht");
+assert(pageOrigin("https://www.example.com/pfad") === "https://example.com", "Vergleichs-Origin ohne www");
+assert(sameSite("https://www.example.com/pfad", "https://example.com"), "www bleibt dieselbe Website");
+assert(!sameSite("http://example.com", "https://example.com"), "Schema trennt");
+assert(!sameSite("https://example.com:8443", "https://example.com"), "Port trennt");
+assert(!sameSite("https://shop.example.com", "https://example.com"), "Subdomain trennt");
+assert(identityKind({}) === "temporary", "fehlendes kind ist temporär");
+assert(identityKind({ kind: "temporary" }) === "temporary", "temporäres kind bleibt");
 
 const births = new Set();
 const today = new Date();
